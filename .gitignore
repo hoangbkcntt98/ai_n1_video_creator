@@ -1,0 +1,9 @@
+/node_modules
+/.next
+/out
+.env*
+!.env.example
+.pipeline-runtime.json
+*.log
+next-env.d.ts
+*.tsbuildinfo

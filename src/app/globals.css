@@ -1,0 +1,9 @@
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; }
+body { background: #08111f; color: #e8eef8; font-family: Arial, Helvetica, sans-serif; }
+button, input, select, textarea { font: inherit; }
+button { cursor: pointer; }
+a { color: inherit; }
+.eyebrow { margin: 0; color: #70d8dc; font-size: 11px; font-weight: 800; letter-spacing: .13em; }
+.appSwitcher { display: flex; align-items: center; gap: 8px; color: #9eb0ca; font-size: 12px; font-weight: 700; }.appSwitcher select { min-height: 35px; }
+.runMessage { margin: 0; padding: 9px 11px; border-radius: 8px; color: #bdeadc; background: #113b35; font-size: 13px; }
