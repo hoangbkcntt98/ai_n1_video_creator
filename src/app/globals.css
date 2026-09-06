@@ -111,6 +111,7 @@ input[type="checkbox"]:checked {
 /* Input & Textarea */
 input[type="text"],
 input[type="number"],
+input[type="time"],
 input[type="datetime-local"],
 textarea {
   border: 1px solid var(--border);
@@ -125,6 +126,7 @@ textarea {
 
 input[type="text"]:focus,
 input[type="number"]:focus,
+input[type="time"]:focus,
 input[type="datetime-local"]:focus,
 textarea:focus {
   border-color: var(--primary);
@@ -150,6 +152,14 @@ textarea:focus {
   font-family: inherit;
 }
 
+.react-datepicker__time-container,
+.react-datepicker__time,
+.react-datepicker__time-box,
+.react-datepicker__time-list {
+  background: #0a192c;
+  color: var(--text);
+}
+
 .react-datepicker__header {
   border-bottom-color: #29425f;
   background: #102944;
@@ -161,17 +171,29 @@ textarea:focus {
 .react-datepicker__day-name,
 .react-datepicker__day,
 .react-datepicker__time-list-item {
-  color: var(--text);
+  color: var(--text) !important;
+}
+
+.react-datepicker-time__header {
+  background: #102944;
+  color: #f4f8ff !important;
+  font-weight: 700;
 }
 
 .react-datepicker__day:hover,
 .react-datepicker__time-list-item:hover {
-  background: #183450;
+  background: #183450 !important;
+  color: #ffffff !important;
 }
 
 .react-datepicker__day--selected,
 .react-datepicker__day--keyboard-selected {
   background: #1a4d2e;
+}
+
+.react-datepicker__time-list-item--selected {
+  background: #1a4d2e !important;
+  color: #ffffff !important;
 }
 
 .react-datepicker__triangle {

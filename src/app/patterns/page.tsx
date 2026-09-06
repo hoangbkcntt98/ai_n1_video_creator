@@ -40,6 +40,7 @@ export default async function PatternsPage() {
           <Link href="/">Dashboard</Link>
           <Link href="/studio">Video Studio</Link>
           <Link href="/library">Library</Link>
+          <Link href="/quota">Codex Quota</Link>
           <AppSwitcher />
           <LogoutButton />
         </nav>

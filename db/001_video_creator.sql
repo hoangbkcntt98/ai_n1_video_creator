@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS video_creator_runs (
   pattern_name TEXT,
   status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'success', 'failed')),
   log_path TEXT NOT NULL,
+  runner_pid INTEGER,
   error TEXT,
   started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   finished_at TIMESTAMPTZ
@@ -20,3 +21,17 @@ CREATE TABLE IF NOT EXISTS video_creator_videos (
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE TABLE IF NOT EXISTS video_creator_schedule (
+  id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+  enabled BOOLEAN NOT NULL DEFAULT FALSE,
+  run_time TIME NOT NULL DEFAULT '09:00',
+  timezone TEXT NOT NULL DEFAULT 'UTC',
+  force_recreate BOOLEAN NOT NULL DEFAULT FALSE,
+  publish_to_facebook BOOLEAN NOT NULL DEFAULT FALSE,
+  last_run_date DATE,
+  last_run_id BIGINT,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+INSERT INTO video_creator_schedule (id) VALUES (1) ON CONFLICT (id) DO NOTHING;

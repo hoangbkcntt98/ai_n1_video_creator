@@ -1,8 +1,8 @@
-import { createWriteStream, promises as fs } from "node:fs";
+import { appendFileSync, closeSync, openSync, promises as fs } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { appConfig, resolvedOutputPath, toRelativeOutputPath } from "@/lib/config";
-import { ensureVideoCreatorSchema, query } from "@/lib/db";
+import { ensureVideoCreatorSchema, processAlive, query } from "@/lib/db";
 import { markFacebookPublished, markFacebookScheduled, saveVideoDetails } from "@/lib/video";
 
 type RunAction = "create_next" | "generate_pattern" | "publish";
@@ -10,7 +10,7 @@ export type Run = {
   id: number; action: RunAction; pattern_id: number | null; pattern_name: string | null;
   status: "running" | "success" | "failed"; log_path: string; error: string | null;
   started_at: string; finished_at: string | null;
-  output_video?: string | null;
+  output_video?: string | null; runner_pid?: number | null;
 };
 
 function safeLogName() {
@@ -35,7 +35,7 @@ async function createRun(action: RunAction, patternId?: number, patternName?: st
 }
 
 async function finishRun(id: number, status: "success" | "failed", error?: string, outputVideo?: string) {
-  await query(`UPDATE video_creator_runs SET status = $2, error = $3, finished_at = NOW(), output_video = $4 WHERE id = $1`,
+  await query(`UPDATE video_creator_runs SET status = $2, error = $3, finished_at = NOW(), output_video = $4, runner_pid = NULL WHERE id = $1`,
     [id, status, error?.slice(0, 4000) ?? null, outputVideo ?? null]);
 }
 
@@ -89,43 +89,68 @@ async function saveGeneratedVideoDetails(relativePath: string) {
   await saveVideoDetails(relativePath, { title, caption });
 }
 
-function trackProcess(run: Run, command: string, args: string[], afterSuccess?: (stdout: string) => Promise<void>) {
-  const log = createWriteStream(run.log_path, { flags: "a", mode: 0o600 });
+async function trackProcess(
+  run: Run,
+  command: string,
+  args: string[],
+  afterSuccess?: (stdout: string, outputVideo?: string) => Promise<void>,
+  afterRunFinished?: (outputVideo?: string) => Promise<void>,
+) {
   const safeArgs = args.map((arg, index) => args[index - 1] === "--page-token" ? "[REDACTED]" : (arg.includes(" ") ? JSON.stringify(arg) : arg));
-  log.write(`$ ${command} ${safeArgs.join(" ")}\n\n`);
-  let stdout = "";
-  let stderr = "";
+  const header = `$ ${command} ${safeArgs.join(" ")}\n\n`;
+  appendFileSync(run.log_path, header, { mode: 0o600 });
   let child;
   try {
-    child = spawn(command, args, { cwd: appConfig.skillDir(), env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+    const logFd = openSync(run.log_path, "a");
+    child = spawn(command, args, {
+      cwd: appConfig.skillDir(),
+      env: process.env,
+      detached: true,
+      stdio: ["ignore", logFd, logFd],
+    });
+    closeSync(logFd);
   } catch (error) {
-    log.end();
     void finishRun(run.id, "failed", error instanceof Error ? error.message : "Không khởi động được pipeline.");
     return;
   }
-  child.stdout.on("data", (data: Buffer) => { const text = data.toString(); stdout += text; log.write(text); });
-  child.stderr.on("data", (data: Buffer) => { const text = data.toString(); stderr += text; log.write(text); });
+  await query(`UPDATE video_creator_runs SET runner_pid = $2 WHERE id = $1 AND status = 'running'`, [run.id, child.pid ?? null]);
   child.on("error", (error) => {
-    log.write(`\nProcess error: ${error.message}\n`); log.end();
+    void fs.appendFile(run.log_path, `\nProcess error: ${error.message}\n`);
     void finishRun(run.id, "failed", error.message);
   });
   child.on("close", async (code) => {
     try {
-      if (code !== 0) throw new Error((stderr || `Pipeline kết thúc với mã ${code}.`).trim());
+      const output = await fs.readFile(run.log_path, "utf8").catch(() => "");
+      if (code !== 0) throw new Error((output.split(/\r?\n/).slice(-20).join("\n") || `Pipeline kết thúc với mã ${code}.`).trim());
       // Python logging is written to stderr by default, while the final JSON
       // status is written to stdout. Parse both streams for the output path.
-      const outputVideo = parseOutputVideo(`${stdout}\n${stderr}`);
-      if (afterSuccess) await afterSuccess(stdout);
+      const outputVideo = parseOutputVideo(output);
+      const jsonLine = output.split(/\r?\n/).reverse().find((line) => {
+        try { return Boolean(JSON.parse(line.trim()) && line.trim().startsWith("{")); } catch { return false; }
+      })?.trim() || output;
+      if (afterSuccess) await afterSuccess(jsonLine, outputVideo);
       if (outputVideo) await saveGeneratedVideoDetails(outputVideo).catch(() => {});
       await finishRun(run.id, "success", undefined, outputVideo);
+      if (afterRunFinished) {
+        try {
+          await afterRunFinished(outputVideo);
+        } catch (error) {
+          await fs.appendFile(run.log_path, `\nPost-run action error: ${error instanceof Error ? error.message : "Unknown error"}\n`);
+        }
+      }
     } catch (error) {
       await finishRun(run.id, "failed", error instanceof Error ? error.message : "Pipeline lỗi không xác định.");
-    } finally { log.end(); }
+    }
   });
   child.unref();
 }
 
-export async function startGeneration(input: { patternId?: number; patternName?: string; forceRecreate?: boolean }) {
+export async function startGeneration(input: {
+  patternId?: number;
+  patternName?: string;
+  forceRecreate?: boolean;
+  publishToFacebook?: boolean;
+}) {
   const selected = input.patternId !== undefined;
   if (selected && (!Number.isInteger(input.patternId) || input.patternId! <= 0 || !input.patternName?.trim())) {
     throw new Error("Chọn mẫu ngữ pháp hợp lệ trước khi tạo video.");
@@ -135,7 +160,15 @@ export async function startGeneration(input: { patternId?: number; patternName?:
   const args = ["grammar_pipeline_module/jlpt_n1_video_pipeline.py", "--config", configPath, "--step", "all", "--skip-publish"];
   if (selected) args.push("--pattern-id", String(input.patternId), "--pattern-name", input.patternName!.trim());
   if (input.forceRecreate) args.push("--force-recreate");
-  trackProcess(run, "python3", args);
+  await trackProcess(run, "python3", args, undefined, async (outputVideo) => {
+    if (!input.publishToFacebook || !outputVideo) return;
+    const fileName = path.basename(outputVideo);
+    const patternName = fileName.replace(/_video\.mp4$/i, "");
+    const captionPath = path.join(appConfig.dataDir(), path.dirname(outputVideo), `${patternName}_reel_caption.txt`);
+    const caption = await fs.readFile(captionPath, "utf8").catch(() => "");
+    if (!caption.trim()) throw new Error("Video created, but Facebook caption is missing.");
+    await startFacebookPublish(outputVideo, caption, { title: patternName.replaceAll("_", " ").trim() });
+  });
   return run;
 }
 
@@ -174,7 +207,7 @@ export async function startFacebookPublish(
     "--page-token", appConfig.pipelineConfig().facebook.pageToken, "--video-file", videoFile, "--description-file", captionPath];
   if (options.title?.trim()) args.push("--title", options.title.trim());
   if (scheduledAt) args.push("--scheduled-publish-time", String(Math.floor(scheduledAt.getTime() / 1000)));
-  trackProcess(run, "python3", args, async (stdout) => {
+  await trackProcess(run, "python3", args, async (stdout) => {
     const payload = JSON.parse(stdout.trim()) as {
       video_id?: string; success?: boolean; scheduled_publish_time?: number | null;
     };
@@ -190,6 +223,44 @@ export async function startFacebookPublish(
     }
   });
   return run;
+}
+
+const resumedRuns = new Set<number>();
+
+async function finalizeResumedRun(run: Pick<Run, "id" | "log_path">) {
+  const output = await fs.readFile(run.log_path, "utf8").catch(() => "");
+  const outputVideo = parseOutputVideo(output);
+  const succeeded = /PIPELINE COMPLETED SUCCESSFULLY|^\s*\{\s*"success"\s*:\s*true\b/m.test(output);
+  if (succeeded) {
+    if (outputVideo) await saveGeneratedVideoDetails(outputVideo).catch(() => {});
+    await finishRun(run.id, "success", undefined, outputVideo);
+  } else {
+    await finishRun(run.id, "failed", "Pipeline process ended during application restart.");
+  }
+}
+
+function monitorResumedRun(run: Pick<Run, "id" | "log_path">, pid: number) {
+  if (resumedRuns.has(run.id)) return;
+  resumedRuns.add(run.id);
+  const timer = setInterval(() => {
+    if (processAlive(pid)) return;
+    clearInterval(timer);
+    resumedRuns.delete(run.id);
+    void finalizeResumedRun(run);
+  }, 5_000);
+  timer.unref();
+}
+
+export async function resumeActiveRuns() {
+  await ensureVideoCreatorSchema();
+  const result = await query<Pick<Run, "id" | "log_path" | "runner_pid">>(
+    `SELECT id, log_path, runner_pid FROM video_creator_runs
+     WHERE status = 'running' AND runner_pid IS NOT NULL`,
+  );
+  for (const run of result.rows) {
+    if (run.runner_pid && processAlive(run.runner_pid)) monitorResumedRun(run, run.runner_pid);
+    else await finalizeResumedRun(run);
+  }
 }
 
 export async function listRuns() {

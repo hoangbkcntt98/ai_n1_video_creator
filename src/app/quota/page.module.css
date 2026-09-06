@@ -1,0 +1,50 @@
+.page { min-height: 100vh; background: radial-gradient(circle at 18% -10%, #193765 0, transparent 34%), #08111f; }
+.header { min-height: 72px; padding: 14px clamp(18px, 4vw, 68px); display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid #24354d; background: rgba(8, 17, 31, .8); backdrop-filter: blur(12px); }
+.brand { display: flex; align-items: center; gap: 11px; }
+.brand strong { display: block; font-size: 17px; }
+.brand small { color: #8fa4c2; font-size: 12px; }
+.mark { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 11px; color: #06101e; background: linear-gradient(135deg, #6de8be, #48aef6); font-size: 12px; font-weight: 900; }
+.actions { display: flex; align-items: center; gap: 11px; }
+.actions > a { min-height: 35px; display: grid; place-items: center; padding: 0 14px; border: 1px solid #3a5477; border-radius: 8px; color: #dcecff; background: #0b1a2e; text-decoration: none; font-size: 13px; font-weight: 600; }
+.actions > a:hover { border-color: #6de8be; background: #143757; }
+.content { width: min(1180px, calc(100% - 36px)); margin: 30px auto 70px; }
+.heading { margin-bottom: 20px; }
+.heading h1 { margin: 4px 0 8px; font-size: clamp(28px, 4vw, 42px); letter-spacing: -.04em; }
+.heading p:not(.eyebrow) { margin: 0; color: #aebfd6; }
+.panel { padding: 23px; border: 1px solid #263b57; border-radius: 18px; background: linear-gradient(135deg, rgba(20, 38, 66, .95), rgba(11, 23, 42, .95)); }
+.inputHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.inputHeader h2 { margin: 0 0 5px; font-size: 20px; }
+.inputHeader p { margin: 0; color: #8fa4c2; font-size: 13px; }
+.inputActions { display: flex; gap: 8px; flex-wrap: wrap; }
+.jsonInput { width: 100%; min-height: 220px; margin-top: 17px; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.error { margin: 12px 0 0; color: #ffb7ba; font-size: 13px; }
+.loadedAt { margin: 12px 0 0; color: #8cf0c8; font-size: 13px; }
+.empty { margin: 20px 0 0; color: #8fa4c2; font-size: 14px; }
+.accountGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; margin-top: 18px; }
+.accountCard { padding: 17px; border: 1px solid #29425f; border-radius: 12px; background: #0a192c; }
+.accountHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.provider { color: #6de8be; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.accountHeader h3 { margin: 3px 0 0; color: #e8eef8; font-size: 17px; overflow-wrap: anywhere; }
+.active, .inactive { padding: 4px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.active { color: #8cf0c8; background: #144332; }
+.inactive { color: #ffb7ba; background: #482630; }
+.accountMeta { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 14px; color: #8fa4c2; font-size: 12px; }
+.accountMeta b, .quotaValues b { color: #dcecff; }
+.quotaGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+.quotaBlock { padding: 12px; border: 1px solid #213750; border-radius: 9px; background: #0b1a2e; }
+.quotaBlockHeader { display: flex; justify-content: space-between; gap: 8px; color: #dcecff; font-size: 13px; }
+.quotaBlockHeader span { color: #8fa4c2; font-size: 11px; }
+.progress { height: 6px; margin: 10px 0; overflow: hidden; border-radius: 999px; background: #1a2c43; }
+.progress span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #6de8be, #48aef6); }
+.quotaValues { display: flex; justify-content: space-between; gap: 8px; color: #8fa4c2; font-size: 11px; }
+.quotaBlock small { display: block; margin-top: 8px; color: #8fa4c2; font-size: 11px; overflow-wrap: anywhere; }
+@media (max-width: 740px) {
+  .header, .actions { align-items: stretch; flex-direction: column; }
+  .content { width: min(100% - 24px, 1180px); margin-top: 18px; }
+  .panel { padding: 16px; }
+  .inputHeader { flex-direction: column; }
+  .inputActions { width: 100%; }
+  .inputActions button { flex: 1; }
+  .accountGrid { grid-template-columns: 1fr; }
+  .quotaGrid { grid-template-columns: 1fr; }
+}
