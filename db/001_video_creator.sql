@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS video_creator_videos (
   title TEXT NOT NULL DEFAULT '',
   caption TEXT NOT NULL DEFAULT '',
   facebook_video_id TEXT,
+  scheduled_publish_at TIMESTAMPTZ,
   published_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

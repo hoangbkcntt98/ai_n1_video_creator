@@ -28,18 +28,21 @@ export async function ensureVideoCreatorSchema() {
         finished_at TIMESTAMPTZ
       )`);
       await query(`CREATE UNIQUE INDEX IF NOT EXISTS video_creator_one_active_run_idx
-        ON video_creator_runs ((1)) WHERE status = 'running'`);
-      await query(`CREATE INDEX IF NOT EXISTS video_creator_runs_status_idx
-        ON video_creator_runs (status, started_at DESC)`);
-      await query(`CREATE TABLE IF NOT EXISTS video_creator_videos (
+      ON video_creator_runs ((1)) WHERE status = 'running'`);
+     await query(`CREATE INDEX IF NOT EXISTS video_creator_runs_status_idx
+       ON video_creator_runs (status, started_at DESC)`);
+     await query(`ALTER TABLE video_creator_runs ADD COLUMN IF NOT EXISTS output_video TEXT`);
+     await query(`CREATE TABLE IF NOT EXISTS video_creator_videos (
         relative_path TEXT PRIMARY KEY,
         title TEXT NOT NULL DEFAULT '',
         caption TEXT NOT NULL DEFAULT '',
         facebook_video_id TEXT,
+        scheduled_publish_at TIMESTAMPTZ,
         published_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`);
+      await query(`ALTER TABLE video_creator_videos ADD COLUMN IF NOT EXISTS scheduled_publish_at TIMESTAMPTZ`);
     })().catch((error) => { schemaPromise = undefined; throw error; });
   }
   return schemaPromise;

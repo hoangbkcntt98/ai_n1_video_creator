@@ -1,0 +1,52 @@
+.page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: radial-gradient(circle at 50% -15%, #193765 0, transparent 48%), #08111f;
+}
+
+.card {
+  width: min(100%, 430px);
+  padding: 32px;
+  border: 1px solid #263b57;
+  border-radius: 18px;
+  background: #0a192c;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .25);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin-bottom: 28px;
+}
+
+.brand strong, .brand small { display: block; }
+.brand small { color: #8fa4c2; font-size: 12px; }
+.mark {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  color: #06101e;
+  background: linear-gradient(135deg, #6de8be, #48aef6);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.card h1 { margin: 0 0 8px; font-size: 28px; }
+.card > p { margin: 0 0 22px; color: #aebfd6; font-size: 14px; }
+.form { display: grid; gap: 14px; }
+.form label { display: grid; gap: 6px; align-items: start; }
+.form input {
+  width: 100%;
+  border: 1px solid #263b57;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #081321;
+  color: #e8eef8;
+}
+.form button { width: 100%; margin-top: 4px; }
+.error { margin: 0; color: #ffb7ba; font-size: 13px; }

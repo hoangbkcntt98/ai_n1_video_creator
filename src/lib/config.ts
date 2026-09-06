@@ -39,7 +39,10 @@ export const appConfig = {
         workDir: process.env.WORK_DIR?.trim() || this.skillDir(), logDir: this.logDir(),
       },
       pipeline: {
+        forceRecreate: asBoolean(process.env.PIPELINE_FORCE_RECREATE, false),
         skipImageGeneration: asBoolean(process.env.PIPELINE_SKIP_IMAGE_GENERATION, false),
+        skipAiCreateIfExists: asBoolean(process.env.PIPELINE_SKIP_AI_CREATE_IF_EXISTS, true),
+        skipCreateImageIfExists: asBoolean(process.env.PIPELINE_SKIP_CREATE_IMAGE_IF_EXISTS, true),
         // Facebook publish must only start from explicit dashboard confirmation.
         skipPublish: true,
         logLevel: process.env.PIPELINE_LOG_LEVEL || "INFO",

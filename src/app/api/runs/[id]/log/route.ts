@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { appConfig } from "@/lib/config";
 import { ensureVideoCreatorSchema, query } from "@/lib/db";
+import { normalizeOutputVideo, parseOutputVideo } from "@/lib/pipeline";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,6 +16,7 @@ type RunLogRow = {
   error: string | null;
   started_at: string;
   finished_at: string | null;
+  output_video: string | null;
 };
 
 function safeLogPath(logPath: string) {
@@ -51,11 +53,15 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
 
   try {
     await ensureVideoCreatorSchema();
-    const result = await query<RunLogRow>(`SELECT id, status, log_path, error, started_at, finished_at
+    const result = await query<RunLogRow>(`SELECT id, status, log_path, error, started_at, finished_at, output_video
       FROM video_creator_runs WHERE id = $1`, [runId]);
     const run = result.rows[0];
     if (!run) return Response.json({ error: "Không tìm thấy pipeline run." }, { status: 404 });
-    return Response.json({ run, log: await readLogTail(run.log_path) });
+    const log = await readLogTail(run.log_path);
+    run.output_video = run.output_video
+      ? (normalizeOutputVideo(run.output_video) || run.output_video)
+      : (parseOutputVideo(log) || null);
+    return Response.json({ run, log });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "Không đọc được log pipeline." }, { status: 500 });
   }
