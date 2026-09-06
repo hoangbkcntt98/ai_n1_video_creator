@@ -59,6 +59,28 @@ export async function ensureVideoCreatorSchema() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`);
       await query(`ALTER TABLE video_creator_schedule ADD COLUMN IF NOT EXISTS publish_to_facebook BOOLEAN NOT NULL DEFAULT FALSE`);
+      await query(`CREATE TABLE IF NOT EXISTS video_creator_quota_schedule (
+        id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+        enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        run_day SMALLINT NOT NULL DEFAULT 0 CHECK (run_day BETWEEN 0 AND 6),
+        run_time TIME NOT NULL DEFAULT '00:00',
+        timezone TEXT NOT NULL DEFAULT 'UTC',
+        threshold_percent NUMERIC NOT NULL DEFAULT 10,
+        cycle_active BOOLEAN NOT NULL DEFAULT FALSE,
+        last_trigger_date DATE,
+        active_run_id BIGINT,
+        last_quota_percent NUMERIC,
+        last_error TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )`);
+      await query(`ALTER TABLE video_creator_quota_schedule ADD COLUMN IF NOT EXISTS run_day SMALLINT NOT NULL DEFAULT 0`);
+      await query(`ALTER TABLE video_creator_quota_schedule ADD COLUMN IF NOT EXISTS threshold_percent NUMERIC NOT NULL DEFAULT 10`);
+      await query(`ALTER TABLE video_creator_quota_schedule ADD COLUMN IF NOT EXISTS cycle_active BOOLEAN NOT NULL DEFAULT FALSE`);
+      await query(`ALTER TABLE video_creator_quota_schedule ADD COLUMN IF NOT EXISTS last_trigger_date DATE`);
+      await query(`ALTER TABLE video_creator_quota_schedule ADD COLUMN IF NOT EXISTS active_run_id BIGINT`);
+      await query(`ALTER TABLE video_creator_quota_schedule ADD COLUMN IF NOT EXISTS last_quota_percent NUMERIC`);
+      await query(`ALTER TABLE video_creator_quota_schedule ADD COLUMN IF NOT EXISTS last_error TEXT`);
     })().catch((error) => { schemaPromise = undefined; throw error; });
   }
   return schemaPromise;

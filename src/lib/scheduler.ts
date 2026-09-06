@@ -1,5 +1,6 @@
 import { ensureVideoCreatorSchema, query } from "@/lib/db";
 import { startGeneration } from "@/lib/pipeline";
+import { startQuotaScheduler } from "@/lib/quotaScheduler";
 
 export type DailySchedule = {
   enabled: boolean;
@@ -151,4 +152,5 @@ export function startScheduler() {
   timer.unref();
   const initial = setTimeout(() => { void tick(); }, 2_000);
   initial.unref();
+  startQuotaScheduler();
 }
