@@ -1,0 +1,87 @@
+# Upload YouTube qua API
+
+## Cần chuẩn bị
+
+- Tài khoản Google có kênh YouTube, có quyền upload lên kênh đó.
+- Google Cloud project bật **YouTube Data API v3**.
+- OAuth consent screen và OAuth client loại **Web application**.
+- Client ID, Client Secret và Refresh Token có scope `https://www.googleapis.com/auth/youtube.upload`.
+- Python 3.9+ trên server; worker chỉ dùng thư viện chuẩn.
+
+**API key không đủ để upload. Không dùng service account cho kênh YouTube thông thường.**
+
+## Cấu hình Google Cloud và lấy refresh token
+
+1. Mở Google Cloud Console: https://console.cloud.google.com/
+2. Tạo/chọn project. Vào **APIs & Services → Library**, bật **YouTube Data API v3**.
+3. Mở **Google Auth Platform** (hoặc OAuth consent screen). Điền tên app, email hỗ trợ và thông tin liên hệ.
+4. Với app External đang ở **Testing**, thêm email Google của bạn vào **Test users**.
+5. Trong phần **Data Access**, thêm scope:
+
+   ```text
+   https://www.googleapis.com/auth/youtube.upload
+   ```
+
+6. Tạo OAuth Client ID loại **Web application**. Thêm Authorized redirect URI chính xác:
+
+   ```text
+   https://developers.google.com/oauthplayground
+   ```
+
+7. Mở https://developers.google.com/oauthplayground
+8. Bấm biểu tượng cài đặt, bật **Use your own OAuth credentials**. Nhập Client ID và Client Secret từ project vừa tạo. Chọn access type **Offline**, yêu cầu consent nếu có tùy chọn.
+9. Nhập scope `https://www.googleapis.com/auth/youtube.upload`, bấm **Authorize APIs**. Đăng nhập đúng Google account và chọn đúng kênh nếu Google hỏi.
+10. Ở bước 2, bấm **Exchange authorization code for tokens**. Sao chép **Refresh token**, không phải Access token.
+11. Điền `.env.local`:
+
+    ```env
+    YOUTUBE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+    YOUTUBE_CLIENT_SECRET=your-client-secret
+    YOUTUBE_REFRESH_TOKEN=your-refresh-token
+    ```
+
+12. Nếu code chưa được build, đợi pipeline/upload hiện tại kết thúc rồi chạy `npx next build`. Sau đó restart app:
+
+    ```bash
+    pm2 restart video-creator --update-env
+    ```
+
+Ứng dụng không cần OAuth callback riêng: bước cấp quyền thực hiện qua OAuth Playground bằng client của bạn. Không dùng credentials mặc định của Playground cho token chạy lâu dài.
+
+## Upload trong app
+
+1. Dashboard → **Run History** → mở run đã tạo video, hoặc **Grammar Patterns** → **Video / Publish**.
+2. Chỉnh **Title** và **Caption / Description** ngay bên dưới video. Facebook và YouTube dùng chung nội dung đang chỉnh, không cần Save trước khi upload. Với YouTube, title tối đa 100 ký tự; description tối đa 5000 byte UTF-8. App báo lỗi nếu vượt giới hạn, không tự cắt nội dung.
+3. Bấm **Upload to YouTube** cạnh các nút Facebook để mở tùy chọn ngay tại video, không chuyển trang.
+4. Chọn **Private**, **Unlisted** hoặc **Public**. Mặc định **Private**.
+5. Chọn đúng audience **Made for kids** và khai báo **realistic altered or synthetic content** theo nội dung thực tế. Không phải mọi ảnh AI/TTS đều mặc định cần khai báo giống nhau; đọc hướng dẫn YouTube.
+6. Bấm **Confirm YouTube Upload**, xác nhận. App tạo run `youtube_publish`; xem tiến độ/log ngay trong tùy chọn upload hoặc Dashboard → Run History.
+7. Upload thành công lưu YouTube video ID, thời gian upload và visibility YouTube trả về. Mở lại **Upload to YouTube** tại video để xem thông tin và link **View on YouTube**. Upload lại sẽ tạo video YouTube mới; app cảnh báo trước khi xác nhận.
+
+Không còn màn YouTube riêng. Đường dẫn `/youtube` cũ chuyển về Dashboard. Trường lịch bên cạnh chỉ áp dụng cho Facebook, không hẹn giờ YouTube.
+
+Thời gian upload không phải thời gian công khai. YouTube có thể còn xử lý video sau khi API nhận file.
+
+## Giới hạn và vận hành
+
+- Đây là upload thủ công, chưa tích hợp tự động vào Daily/Quota Schedule và chưa hỗ trợ hẹn giờ YouTube.
+- App chỉ cho một pipeline/upload hoạt động đồng thời. Nếu đang có run khác, upload trả lỗi chờ.
+- Worker Python chạy detached: đóng tab không hủy upload. App có thể khôi phục kết quả từ log sau restart; nếu chính worker bị dừng, không tự upload lại.
+- Upload dùng resumable chunks, kiểm tra offset trước khi retry lỗi mạng để tránh gửi lại toàn bộ video.
+- Trước khi retry run lỗi, kiểm tra YouTube Studio: có thể YouTube đã nhận video nhưng app chưa ghi được kết quả.
+- `CODEX_QUOTA_ACCOUNT` không chọn kênh YouTube. Kênh nhận upload được quyết định bởi tài khoản/kênh đã cấp OAuth refresh token.
+- Project API chưa được YouTube kiểm tra, tạo sau **28/07/2020**, bị giới hạn video upload qua `videos.insert` ở chế độ private. Muốn bỏ giới hạn cần quy trình API compliance audit của YouTube. OAuth verification và YouTube API audit là hai việc khác nhau.
+- Với OAuth External còn **Testing**, refresh token có scope YouTube thường hết hạn sau 7 ngày. Khi dùng lâu dài, xem xét chuyển app sang Production và hoàn tất verification nếu Google yêu cầu.
+- Có quota API và giới hạn upload của kênh. Khi gặp `quotaExceeded`, `uploadLimitExceeded`, dừng và kiểm tra project/channel, không retry liên tục.
+- Khi gặp `invalid_grant`, cấp quyền lại để lấy refresh token mới.
+- Token chỉ nằm trong môi trường server, không trả về browser, không ghi vào command line/log. Không commit `.env.local`; không gửi Client Secret hay Refresh Token trong chat. Nếu lộ token, thu hồi quyền ứng dụng trong Google Account và cấp lại.
+
+## Tài liệu chính thức
+
+- Upload API: https://developers.google.com/youtube/v3/docs/videos/insert
+- Video metadata: https://developers.google.com/youtube/v3/docs/videos
+- Resumable upload: https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol
+- OAuth server-side: https://developers.google.com/youtube/v3/guides/auth/server-side-web-apps
+- Refresh token expiration: https://developers.google.com/identity/protocols/oauth2#expiration
+- OAuth Playground: https://developers.google.com/oauthplayground
+- Altered/synthetic content: https://support.google.com/youtube/answer/14328491

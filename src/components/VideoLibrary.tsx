@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { VideoRecord } from "@/lib/video";
+import YouTubeUploader from "./YouTubeUploader";
 import SchedulePicker from "./SchedulePicker";
 
 type Props = { videos: VideoRecord[] };
@@ -15,6 +16,7 @@ export default function VideoLibrary({ videos }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, { title: string; caption: string }>>({});
   const [scheduledValues, setScheduledValues] = useState<Record<string, string>>({});
 
   async function request(url: string, init: RequestInit, key: string, successMessage?: string) {
@@ -66,18 +68,18 @@ export default function VideoLibrary({ videos }: Props) {
     if (inputRef.current) inputRef.current.value = "";
   }
 
-  return <section className="library"><div className="sectionTitle"><div><p className="eyebrow">OUTPUT_DIR</p><h2>MP4 Videos</h2></div><div className="upload"><input ref={inputRef} type="file" accept="video/mp4" onChange={upload} disabled={busy !== null}/><span>Or upload an MP4 to edit its caption and publish to Facebook.</span></div></div>
+  return <section className="library"><div className="sectionTitle"><div><p className="eyebrow">OUTPUT_DIR</p><h2>MP4 Videos</h2></div><div className="upload"><input ref={inputRef} type="file" accept="video/mp4" onChange={upload} disabled={busy !== null}/><span>Or upload an MP4 to edit its caption and publish to Facebook or YouTube.</span></div></div>
     {message && <p className="runMessage" role="status">{message}</p>}
     {!videos.length ? <p className="empty">No videos yet. Run the pipeline or upload an MP4.</p> : <div className="videoGrid">{videos.map((videos) => <article className="videoCard" key={videos.relativePath}>
       <video controls preload="metadata" src={videoUrl(videos.relativePath)} />
       <form onSubmit={(event) => { event.preventDefault(); void save(videos, event.currentTarget); }}>
-        <label>Title<input name="title" defaultValue={videos.title} maxLength={300}/></label>
-        <label>Facebook Caption<textarea name="caption" defaultValue={videos.caption} maxLength={5000} rows={5} placeholder="Write a caption before publishing to Facebook"/></label>
+        <label>Title<input name="title" value={drafts[videos.relativePath]?.title ?? videos.title} onChange={(event) => setDrafts((current) => ({ ...current, [videos.relativePath]: { title: event.target.value, caption: current[videos.relativePath]?.caption ?? videos.caption } }))} maxLength={300}/></label>
+        <label>Caption / Description<textarea name="caption" value={drafts[videos.relativePath]?.caption ?? videos.caption} onChange={(event) => setDrafts((current) => ({ ...current, [videos.relativePath]: { title: current[videos.relativePath]?.title ?? videos.title, caption: event.target.value } }))} maxLength={5000} rows={5} placeholder="Write a caption or YouTube description"/></label>
         <p className="videoMeta">{formatter.format(videos.size / 1024 / 1024)} · {new Date(videos.modifiedAt).toLocaleString("en-US")}<br/>{videos.relativePath}</p>
         {videos.scheduledPublishAt ? <p className="published">Scheduled: {new Date(videos.scheduledPublishAt).toLocaleString("en-US")} · ID {videos.facebookVideoId}</p> : null}
         {videos.facebookVideoId && !videos.scheduledPublishAt ? <p className="published">Published to Facebook · ID {videos.facebookVideoId}</p> : null}
-        <label>Schedule publishing (leave empty to publish now)<SchedulePicker name="scheduledAt" value={scheduledValues[videos.relativePath] ?? videos.scheduledPublishAt ?? ""} onChange={(value) => setScheduledValues((current) => ({ ...current, [videos.relativePath]: value }))} /></label>
-        <div className="cardActions"><button type="submit" disabled={busy !== null}>Save Content</button><button type="button" className="facebook" disabled={busy !== null} onClick={(event) => { const form = event.currentTarget.closest("form"); if (form) void publish(videos, form); }}>Publish to Facebook</button><button type="button" className="schedule" disabled={busy !== null} onClick={(event) => { const form = event.currentTarget.closest("form"); if (form) void publish(videos, form, true); }}>Schedule Facebook Post</button></div>
+        <label>Facebook schedule (leave empty to publish now)<SchedulePicker name="scheduledAt" value={scheduledValues[videos.relativePath] ?? videos.scheduledPublishAt ?? ""} onChange={(value) => setScheduledValues((current) => ({ ...current, [videos.relativePath]: value }))} /></label>
+        <div className="cardActions"><button type="submit" disabled={busy !== null}>Save Content</button><button type="button" className="facebook" disabled={busy !== null} onClick={(event) => { const form = event.currentTarget.closest("form"); if (form) void publish(videos, form); }}>Publish to Facebook</button><button type="button" className="schedule" disabled={busy !== null} onClick={(event) => { const form = event.currentTarget.closest("form"); if (form) void publish(videos, form, true); }}>Schedule Facebook Post</button><YouTubeUploader videoPath={videos.relativePath} title={drafts[videos.relativePath]?.title ?? videos.title} caption={drafts[videos.relativePath]?.caption ?? videos.caption} disabled={busy !== null} /></div>
       </form>
     </article>)}</div>}
   </section>;

@@ -6,11 +6,13 @@ import { ensureVideoCreatorSchema, query } from "@/lib/db";
 export type VideoRecord = {
   relativePath: string; title: string; caption: string; size: number; modifiedAt: string;
   facebookVideoId: string | null; scheduledPublishAt: string | null; publishedAt: string | null;
+  youtubeVideoId: string | null; youtubeUploadedAt: string | null; youtubePrivacy: string | null;
 };
 
 type StoredVideo = {
   relative_path: string; title: string; caption: string; facebook_video_id: string | null;
   scheduled_publish_at: string | null; published_at: string | null;
+  youtube_video_id: string | null; youtube_uploaded_at: string | null; youtube_privacy: string | null;
 };
 
 async function discoverMp4Files(dir: string, level = 0): Promise<string[]> {
@@ -32,7 +34,8 @@ export async function listVideos(): Promise<VideoRecord[]> {
   try {
     await ensureVideoCreatorSchema();
     if (relativePaths.length) {
-      const result = await query<StoredVideo>(`SELECT relative_path, title, caption, facebook_video_id, scheduled_publish_at, published_at
+      const result = await query<StoredVideo>(`SELECT relative_path, title, caption, facebook_video_id, scheduled_publish_at, published_at,
+        youtube_video_id, youtube_uploaded_at, youtube_privacy
         FROM video_creator_videos WHERE relative_path = ANY($1::text[])`, [relativePaths]);
       stored = new Map(result.rows.map((item) => [item.relative_path, item]));
     }
@@ -55,6 +58,9 @@ export async function listVideos(): Promise<VideoRecord[]> {
       facebookVideoId: row?.facebook_video_id || null,
       scheduledPublishAt: row?.scheduled_publish_at || null,
       publishedAt: row?.published_at || null,
+      youtubeVideoId: row?.youtube_video_id || null,
+      youtubeUploadedAt: row?.youtube_uploaded_at || null,
+      youtubePrivacy: row?.youtube_privacy || null,
     };
   }));
   return records.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 80);
@@ -92,6 +98,18 @@ export async function markFacebookPublished(relativePath: string, videoId: strin
     ON CONFLICT (relative_path) DO UPDATE SET facebook_video_id = EXCLUDED.facebook_video_id,
       published_at = NOW(), updated_at = NOW()`, [relativePath, videoId]);
   await markGrammarPublished(relativePath, videoId);
+}
+
+export async function markYouTubeUploaded(relativePath: string, videoId: string, privacy: string) {
+  await ensureVideoCreatorSchema();
+  await query(`INSERT INTO video_creator_videos
+      (relative_path, youtube_video_id, youtube_uploaded_at, youtube_privacy, updated_at)
+    VALUES ($1, $2, NOW(), $3, NOW())
+    ON CONFLICT (relative_path) DO UPDATE SET youtube_video_id = EXCLUDED.youtube_video_id,
+      youtube_uploaded_at = CASE WHEN video_creator_videos.youtube_video_id = EXCLUDED.youtube_video_id
+        THEN COALESCE(video_creator_videos.youtube_uploaded_at, NOW()) ELSE NOW() END,
+      youtube_privacy = EXCLUDED.youtube_privacy, updated_at = NOW()`,
+    [relativePath, videoId, privacy]);
 }
 
 async function markGrammarPublished(relativePath: string, videoId: string) {

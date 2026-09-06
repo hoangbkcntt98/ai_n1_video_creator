@@ -8,6 +8,7 @@
  - Create video pipelines from JLPT N1 grammar patterns
  - Real-time Python log monitoring
  - Upload videos to Facebook
+ - Upload videos to YouTube with OAuth, visibility settings, and background run tracking. Setup guide (Vietnamese): [YouTube setup](docs/YOUTUBE_SETUP.vi.md).
  - Manage grammar patterns with status tracking
  
  ## Tech Stack

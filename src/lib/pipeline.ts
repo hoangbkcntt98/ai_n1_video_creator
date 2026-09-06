@@ -3,9 +3,10 @@ import { spawn } from "node:child_process";
 import path from "node:path";
 import { appConfig, resolvedOutputPath, toRelativeOutputPath } from "@/lib/config";
 import { ensureVideoCreatorSchema, processAlive, query } from "@/lib/db";
-import { markFacebookPublished, markFacebookScheduled, saveVideoDetails } from "@/lib/video";
+import { markFacebookPublished, markFacebookScheduled, markYouTubeUploaded, saveVideoDetails } from "@/lib/video";
+import { youtubeConfiguration, type YouTubeUploadInput } from "@/lib/youtube";
 
-type RunAction = "create_next" | "generate_pattern" | "publish";
+type RunAction = "create_next" | "generate_pattern" | "publish" | "youtube_publish";
 export type Run = {
   id: number; action: RunAction; pattern_id: number | null; pattern_name: string | null;
   status: "running" | "success" | "failed"; log_path: string; error: string | null;
@@ -113,7 +114,6 @@ async function trackProcess(
     void finishRun(run.id, "failed", error instanceof Error ? error.message : "Không khởi động được pipeline.");
     return;
   }
-  await query(`UPDATE video_creator_runs SET runner_pid = $2 WHERE id = $1 AND status = 'running'`, [run.id, child.pid ?? null]);
   child.on("error", (error) => {
     void fs.appendFile(run.log_path, `\nProcess error: ${error.message}\n`);
     void finishRun(run.id, "failed", error.message);
@@ -129,7 +129,7 @@ async function trackProcess(
         try { return Boolean(JSON.parse(line.trim()) && line.trim().startsWith("{")); } catch { return false; }
       })?.trim() || output;
       if (afterSuccess) await afterSuccess(jsonLine, outputVideo);
-      if (outputVideo) await saveGeneratedVideoDetails(outputVideo).catch(() => {});
+      if (outputVideo && run.action !== "youtube_publish") await saveGeneratedVideoDetails(outputVideo).catch(() => {});
       await finishRun(run.id, "success", undefined, outputVideo);
       if (afterRunFinished) {
         try {
@@ -142,7 +142,41 @@ async function trackProcess(
       await finishRun(run.id, "failed", error instanceof Error ? error.message : "Pipeline lỗi không xác định.");
     }
   });
+  await query(`UPDATE video_creator_runs SET runner_pid = $2 WHERE id = $1 AND status = 'running'`, [run.id, child.pid ?? null]);
   child.unref();
+}
+
+export async function startYouTubePublish(input: YouTubeUploadInput) {
+  const configuration = youtubeConfiguration();
+  if (!configuration.configured) throw new Error(`Set ${configuration.missing.join(", ")} in .env.local.`);
+  const root = await fs.realpath(appConfig.outputDir());
+  const videoFile = await fs.realpath(resolvedOutputPath(input.path));
+  if (!videoFile.startsWith(`${root}${path.sep}`)) throw new Error("Video must be inside OUTPUT_DIR.");
+  const stat = await fs.stat(videoFile);
+  if (!stat.isFile() || stat.size <= 0) throw new Error("Video is missing or empty.");
+  const script = path.join(process.cwd(), "scripts", "publish_youtube.py");
+  await fs.access(script);
+  const run = await createRun("youtube_publish");
+  try {
+    const jobPath = `${run.log_path}.json`;
+    await fs.writeFile(jobPath, JSON.stringify({ ...input, videoFile }), { mode: 0o600 });
+    await trackProcess(run, "python3", [script, jobPath], async (stdout) => {
+      await recordYouTubeResult(input.path, stdout);
+    });
+  } catch (error) {
+    await finishRun(run.id, "failed", error instanceof Error ? error.message : "Could not start YouTube upload.");
+    throw error;
+  }
+  return run;
+}
+
+async function recordYouTubeResult(relativePath: string, output: string) {
+  const line = output.split(/\r?\n/).reverse().find((item) => item.trim().startsWith('{"success":'));
+  const result = JSON.parse(line || output) as { success?: boolean; video_id?: string; privacy_status?: string };
+  if (!result.success || !result.video_id || !/^[A-Za-z0-9_-]{11}$/.test(result.video_id)) {
+    throw new Error("YouTube returned no valid video ID. Check YouTube Studio before retrying.");
+  }
+  await markYouTubeUploaded(relativePath, result.video_id, result.privacy_status || "private");
 }
 
 export async function startGeneration(input: {
@@ -227,34 +261,39 @@ export async function startFacebookPublish(
 
 const resumedRuns = new Set<number>();
 
-async function finalizeResumedRun(run: Pick<Run, "id" | "log_path">) {
+async function finalizeResumedRun(run: Pick<Run, "id" | "log_path" | "action">) {
   const output = await fs.readFile(run.log_path, "utf8").catch(() => "");
   const outputVideo = parseOutputVideo(output);
   const succeeded = /PIPELINE COMPLETED SUCCESSFULLY|^\s*\{\s*"success"\s*:\s*true\b/m.test(output);
   if (succeeded) {
-    if (outputVideo) await saveGeneratedVideoDetails(outputVideo).catch(() => {});
+    if (run.action === "youtube_publish") {
+      if (!outputVideo) throw new Error("YouTube upload log has no video path.");
+      await recordYouTubeResult(outputVideo, output);
+    } else if (outputVideo) await saveGeneratedVideoDetails(outputVideo).catch(() => {});
     await finishRun(run.id, "success", undefined, outputVideo);
   } else {
     await finishRun(run.id, "failed", "Pipeline process ended during application restart.");
   }
 }
 
-function monitorResumedRun(run: Pick<Run, "id" | "log_path">, pid: number) {
+function monitorResumedRun(run: Pick<Run, "id" | "log_path" | "action">, pid: number) {
   if (resumedRuns.has(run.id)) return;
   resumedRuns.add(run.id);
   const timer = setInterval(() => {
     if (processAlive(pid)) return;
     clearInterval(timer);
     resumedRuns.delete(run.id);
-    void finalizeResumedRun(run);
+    void finalizeResumedRun(run).catch(() => {
+      void finishRun(run.id, "failed", "Could not recover upload metadata. Check YouTube Studio before retrying.");
+    });
   }, 5_000);
   timer.unref();
 }
 
 export async function resumeActiveRuns() {
   await ensureVideoCreatorSchema();
-  const result = await query<Pick<Run, "id" | "log_path" | "runner_pid">>(
-    `SELECT id, log_path, runner_pid FROM video_creator_runs
+  const result = await query<Pick<Run, "id" | "log_path" | "runner_pid" | "action">>(
+    `SELECT id, log_path, runner_pid, action FROM video_creator_runs
      WHERE status = 'running' AND runner_pid IS NOT NULL`,
   );
   for (const run of result.rows) {

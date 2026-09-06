@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS video_creator_runs (
   id BIGSERIAL PRIMARY KEY,
-  action TEXT NOT NULL CHECK (action IN ('create_next', 'generate_pattern', 'publish')),
+  action TEXT NOT NULL CHECK (action IN ('create_next', 'generate_pattern', 'publish', 'youtube_publish')),
   pattern_id BIGINT,
   pattern_name TEXT,
   status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'success', 'failed')),

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import YouTubeUploader from "./YouTubeUploader";
 import type { Run } from "@/lib/pipeline";
 import SchedulePicker from "./SchedulePicker";
 import styles from "./RunHistory.module.css";
@@ -10,6 +11,7 @@ const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
 type LogState = { text: string; error?: string; loading: boolean };
 
 function formatRunName(run: Run) {
+  if (run.action === "youtube_publish") return "YouTube upload";
   return run.pattern_name ? `${run.pattern_name} (#${run.pattern_id})` : run.action === "publish" ? "Facebook upload" : "Pipeline next pattern";
 }
 
@@ -207,7 +209,7 @@ export default function RunHistory({ runs }: { runs: Run[] }) {
                         />
                       </label>
                       <label>
-                        Facebook Caption
+                        Caption / Description
                         <textarea
                           value={videosData[run.output_video!]?.caption || ""}
                           onChange={(e) => setVideoData(current => ({
@@ -224,7 +226,7 @@ export default function RunHistory({ runs }: { runs: Run[] }) {
                         />
                         </label>
                       <label>
-                        Schedule publishing (leave empty to publish now)
+                        Facebook schedule (leave empty to publish now)
                         <SchedulePicker
                           value={videosData[run.output_video!]?.scheduledAt || ""}
                           onChange={(value) => setVideoData(current => ({
@@ -242,6 +244,7 @@ export default function RunHistory({ runs }: { runs: Run[] }) {
                         <button type="button" onClick={() => saveVideoDetails(run.output_video!)}>Save Content</button>
                         <button type="button" className={styles.facebookBtn} onClick={() => publishToFacebook(run.output_video!)}>Publish to Facebook</button>
                         <button type="button" className={styles.scheduleBtn} onClick={() => publishToFacebook(run.output_video!, true)}>Schedule Facebook Post</button>
+                        <YouTubeUploader videoPath={run.output_video!} title={videosData[run.output_video!]?.title || ""} caption={videosData[run.output_video!]?.caption || ""} />
                       </div>
                     </div>
                   </div>

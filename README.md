@@ -8,6 +8,7 @@
  - Tạo pipeline video từ grammar patterns JLPT N1
  - Theo dõi log Python realtime
  - Upload video lên Facebook
+ - Upload YouTube qua OAuth API, chọn visibility và theo dõi run. Hướng dẫn: [YouTube setup](docs/YOUTUBE_SETUP.vi.md).
  - Quản lý grammar patterns với trạng thái
  
  ## Tech Stack

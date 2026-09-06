@@ -34,6 +34,10 @@ export async function ensureVideoCreatorSchema() {
        ON video_creator_runs (status, started_at DESC)`);
       await query(`ALTER TABLE video_creator_runs ADD COLUMN IF NOT EXISTS output_video TEXT`);
       await query(`ALTER TABLE video_creator_runs ADD COLUMN IF NOT EXISTS runner_pid INTEGER`);
+      // Replace the original CHECK so existing installations accept YouTube runs.
+      await query(`ALTER TABLE video_creator_runs DROP CONSTRAINT IF EXISTS video_creator_runs_action_check,
+        ADD CONSTRAINT video_creator_runs_action_check
+        CHECK (action IN ('create_next', 'generate_pattern', 'publish', 'youtube_publish'))`);
      await query(`CREATE TABLE IF NOT EXISTS video_creator_videos (
         relative_path TEXT PRIMARY KEY,
         title TEXT NOT NULL DEFAULT '',
@@ -45,6 +49,10 @@ export async function ensureVideoCreatorSchema() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`);
       await query(`ALTER TABLE video_creator_videos ADD COLUMN IF NOT EXISTS scheduled_publish_at TIMESTAMPTZ`);
+      await query(`ALTER TABLE video_creator_videos
+        ADD COLUMN IF NOT EXISTS youtube_video_id TEXT,
+        ADD COLUMN IF NOT EXISTS youtube_uploaded_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS youtube_privacy TEXT`);
       await query(`CREATE TABLE IF NOT EXISTS video_creator_schedule (
         id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
         enabled BOOLEAN NOT NULL DEFAULT FALSE,
