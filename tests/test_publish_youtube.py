@@ -1,6 +1,7 @@
 import importlib.util
 import io
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stdout
@@ -11,6 +12,59 @@ spec = importlib.util.spec_from_file_location("youtube", Path(__file__).parents[
 youtube = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(youtube)
 
+
+class YouTubeOAuthTests(unittest.TestCase):
+    def setUp(self):
+        environment = patch.dict(os.environ, {
+            "YOUTUBE_CLIENT_ID": " test-client ",
+            "YOUTUBE_CLIENT_SECRET": " test-secret ",
+            "YOUTUBE_REFRESH_TOKEN": " test-refresh ",
+        })
+        environment.start()
+        self.addCleanup(environment.stop)
+
+    def test_refresh_sends_trimmed_credentials(self):
+        with patch.object(youtube, "request", return_value=(200, {}, b'{"access_token":"test-access"}')) as request:
+            self.assertEqual(youtube.refresh_access_token(), "test-access")
+        self.assertEqual(request.call_args.args[0], "https://oauth2.googleapis.com/token")
+        self.assertEqual(request.call_args.args[3],
+                         b"client_id=test-client&client_secret=test-secret&refresh_token=test-refresh&grant_type=refresh_token")
+
+    def test_invalid_grant_explains_reauthorization_without_leaking_response(self):
+        body = json.dumps({
+            "error": "invalid_grant",
+            "error_description": "secret-response-content",
+            "access_token": "private-access-token",
+        }).encode()
+        with patch.object(youtube, "request", return_value=(400, {}, body)) as request:
+            with self.assertRaises(RuntimeError) as caught:
+                youtube.refresh_access_token()
+        message = str(caught.exception)
+        self.assertIn("Google OAuth HTTP 400 (invalid_grant)", message)
+        self.assertIn("replace YOUTUBE_REFRESH_TOKEN", message)
+        self.assertIn("7 days", message)
+        for secret in ("secret-response-content", "private-access-token", "test-client", "test-secret", "test-refresh"):
+            self.assertNotIn(secret, message)
+        self.assertNotIn("quota", message)
+        request.assert_called_once()
+
+    def test_invalid_client_identifies_client_credentials(self):
+        with patch.object(youtube, "request", return_value=(401, {}, b'{"error":"invalid_client"}')):
+            with self.assertRaisesRegex(RuntimeError, "YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET"):
+                youtube.refresh_access_token()
+
+    def test_malformed_oauth_response_uses_safe_fallback(self):
+        for body in (b"not-json secret", b'{"error":"https://secret.test/token"}', b"null"):
+            with self.subTest(body=body):
+                message = str(youtube.api_error(400, body, oauth=True))
+                self.assertIn("Google OAuth HTTP 400 (requestFailed)", message)
+                self.assertNotIn("secret", message)
+
+    def test_missing_credentials_fail_before_network_request(self):
+        with patch.dict(os.environ, {"YOUTUBE_REFRESH_TOKEN": " "}), patch.object(youtube, "request") as request:
+            with self.assertRaisesRegex(RuntimeError, "Missing YouTube OAuth"):
+                youtube.refresh_access_token()
+        request.assert_not_called()
 
 class YouTubeUploadTests(unittest.TestCase):
     def setUp(self):

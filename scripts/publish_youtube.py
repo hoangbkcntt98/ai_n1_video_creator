@@ -27,7 +27,7 @@ def request(url, method, headers=None, data=None):
         return error.code, error.headers, error.read()
 
 
-def api_error(status, body):
+def api_error(status, body, *, oauth=False):
     # Never log response URLs, OAuth responses, cookies, or access tokens.
     reason = ""
     try:
@@ -41,6 +41,21 @@ def api_error(status, body):
     except (ValueError, TypeError, AttributeError, IndexError):
         pass
     safe_reason = reason if isinstance(reason, str) and re.fullmatch(r"[A-Za-z0-9_]+", reason) else "requestFailed"
+    if oauth:
+        guidance = {
+            "invalid_grant": (
+                "Google rejected YOUTUBE_REFRESH_TOKEN. It may be expired, revoked, or issued "
+                "to a different OAuth client. Re-authorize with your own YOUTUBE_CLIENT_ID and "
+                "YOUTUBE_CLIENT_SECRET, replace YOUTUBE_REFRESH_TOKEN, then restart the app. "
+                "External apps in Testing with YouTube scopes issue refresh tokens that expire "
+                "after 7 days. See docs/YOUTUBE_SETUP.vi.md."
+            ),
+            "invalid_client": (
+                "Check YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET belong to the same active "
+                "OAuth client used to issue YOUTUBE_REFRESH_TOKEN. See docs/YOUTUBE_SETUP.vi.md."
+            ),
+        }.get(safe_reason, "Check YouTube OAuth configuration. See docs/YOUTUBE_SETUP.vi.md.")
+        return RuntimeError("Google OAuth HTTP {} ({}). {}".format(status, safe_reason, guidance))
     return RuntimeError("YouTube API HTTP {} ({}). Check credentials, quota, and channel permissions.".format(status, safe_reason))
 
 
@@ -59,7 +74,7 @@ def refresh_access_token():
         }).encode(),
     )
     if status != 200:
-        raise api_error(status, body)
+        raise api_error(status, body, oauth=True)
     token = json.loads(body).get("access_token")
     if not token:
         raise RuntimeError("Google did not return an access token.")

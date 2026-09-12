@@ -48,6 +48,32 @@
 
 Ứng dụng không cần OAuth callback riêng: bước cấp quyền thực hiện qua OAuth Playground bằng client của bạn. Không dùng credentials mặc định của Playground cho token chạy lâu dài.
 
+## Sửa lỗi `invalid_grant`
+
+Lỗi này ở bước Google OAuth đổi refresh token lấy access token, không phải lỗi quota upload.
+Thông báo cũ của worker ghi `YouTube API HTTP 400 (invalid_grant)`; worker mới ghi
+`Google OAuth HTTP 400 (invalid_grant)` cùng hướng dẫn khôi phục.
+
+Google đã từ chối refresh token. Chỉ mã lỗi này không đủ để xác định nguyên nhân cụ thể:
+token có thể hết hạn, bị thu hồi hoặc không thuộc OAuth client đang cấu hình.
+
+1. Kiểm tra **Google Auth Platform → Audience**. Với app **External / Testing** dùng scope YouTube,
+   refresh token hết hạn sau **7 ngày**. Nếu cần chạy lâu dài, chuyển sang **In production**
+   và hoàn tất verification nếu Google yêu cầu trước khi cấp token mới. Đổi trạng thái không khôi phục token đã hỏng.
+2. Làm lại bước 7–10 phía trên. Trong OAuth Playground, phải bật **Use your own OAuth credentials**,
+   dùng đúng cặp `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` trong `.env.local`, chọn **Offline**
+   và scope `https://www.googleapis.com/auth/youtube.upload`.
+   Không dùng credentials mặc định của Playground cho token chạy lâu dài.
+3. Đăng nhập tài khoản/kênh cần nhận video, cấp quyền lại, rồi lấy **Refresh token** mới.
+   Không dùng Authorization code hoặc Access token thay cho Refresh token.
+4. Thay `YOUTUBE_REFRESH_TOKEN` trong `.env.local`. Nếu đổi OAuth client, cập nhật cả ba biến cùng nhau.
+   Không gửi token hay Client Secret vào chat/log.
+5. Đợi run hiện tại kết thúc, chạy `pm2 restart video-creator --update-env` để app nạp lại cấu hình.
+   Nếu credentials còn được khai báo trong cấu hình PM2 hoặc môi trường shell, cập nhật nguồn đó:
+   biến môi trường có sẵn được ưu tiên hơn `.env.local`.
+6. Thử upload lại. Không retry liên tục khi token chưa được thay; retry không sửa được `invalid_grant`.
+   Nếu lỗi xảy ra khi đang upload do worker cần refresh token, kiểm tra YouTube Studio trước để tránh đăng trùng.
+
 ## Upload trong app
 
 1. Dashboard → **Run History** → mở run đã tạo video, hoặc **Grammar Patterns** → **Video / Publish**.
