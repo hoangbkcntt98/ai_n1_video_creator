@@ -14,6 +14,18 @@ export type YouTubeUploadInput = {
   containsSyntheticMedia: boolean;
 };
 
+export type YouTubePublishSettings = Pick<YouTubeUploadInput, "privacy" | "madeForKids" | "containsSyntheticMedia">;
+
+export function validateYouTubePublishSettings(body: Record<string, unknown>): YouTubePublishSettings {
+  if (body.privacy !== "private" && body.privacy !== "unlisted" && body.privacy !== "public") {
+    throw new Error("Choose private, unlisted, or public visibility.");
+  }
+  if (typeof body.madeForKids !== "boolean" || typeof body.containsSyntheticMedia !== "boolean") {
+    throw new Error("Choose the audience and altered/synthetic content settings.");
+  }
+  return { privacy: body.privacy, madeForKids: body.madeForKids, containsSyntheticMedia: body.containsSyntheticMedia };
+}
+
 export function validateYouTubeUpload(body: Record<string, unknown>): YouTubeUploadInput {
   if (body.confirmUpload !== true) throw new Error("Confirm the YouTube upload first.");
   if (typeof body.path !== "string" || !body.path.toLowerCase().endsWith(".mp4")) {
@@ -26,14 +38,7 @@ export function validateYouTubeUpload(body: Record<string, unknown>): YouTubeUpl
   if (typeof body.description !== "string" || Buffer.byteLength(body.description, "utf8") > 5000 || /[<>]/.test(body.description)) {
     throw new Error("YouTube description must not exceed 5000 UTF-8 bytes or contain < or >.");
   }
-  if (body.privacy !== "private" && body.privacy !== "unlisted" && body.privacy !== "public") {
-    throw new Error("Choose private, unlisted, or public visibility.");
-  }
-  if (typeof body.madeForKids !== "boolean" || typeof body.containsSyntheticMedia !== "boolean") {
-    throw new Error("Choose the audience and altered/synthetic content settings.");
-  }
   return {
-    path: body.path, title, description: body.description, privacy: body.privacy,
-    madeForKids: body.madeForKids, containsSyntheticMedia: body.containsSyntheticMedia,
+    path: body.path, title, description: body.description, ...validateYouTubePublishSettings(body),
   };
 }

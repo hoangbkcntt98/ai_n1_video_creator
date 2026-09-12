@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import styles from "@/app/page.module.css";
+import type { DailySchedule as Schedule } from "@/lib/scheduler";
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
 const timezoneOptions = [
@@ -15,18 +16,6 @@ const timezoneOptions = [
   "America/Los_Angeles",
 ];
 
-type Schedule = {
-  enabled: boolean;
-  runTime: string;
-  timezone: string;
-  forceRecreate: boolean;
-  publishToFacebook: boolean;
-  lastRunDate: string | null;
-  lastRunId: number | null;
-  lastError: string | null;
-  updatedAt: string;
-};
-
 export default function DailyScheduleSettings() {
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [runTime, setRunTime] = useState("09:00");
@@ -34,6 +23,10 @@ export default function DailyScheduleSettings() {
   const [enabled, setEnabled] = useState(false);
   const [forceRecreate, setForceRecreate] = useState(false);
   const [publishToFacebook, setPublishToFacebook] = useState(false);
+  const [publishToYouTube, setPublishToYouTube] = useState(false);
+  const [youtubePrivacy, setYoutubePrivacy] = useState<Schedule["youtubePrivacy"]>("private");
+  const [youtubeAudience, setYoutubeAudience] = useState("");
+  const [youtubeSynthetic, setYoutubeSynthetic] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -55,11 +48,22 @@ export default function DailyScheduleSettings() {
         setEnabled(value.enabled);
         setForceRecreate(value.forceRecreate);
         setPublishToFacebook(value.publishToFacebook);
+        setPublishToYouTube(value.publishToYouTube ?? false);
+        setYoutubePrivacy(value.youtubePrivacy || "private");
+        setYoutubeAudience(typeof value.youtubeMadeForKids === "boolean" ? value.youtubeMadeForKids ? "yes" : "no" : "");
+        setYoutubeSynthetic(typeof value.youtubeContainsSyntheticMedia === "boolean" ? value.youtubeContainsSyntheticMedia ? "yes" : "no" : "");
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "Could not read daily schedule."));
   }, []);
 
   async function save() {
+    if (publishToYouTube && (!youtubeAudience || !youtubeSynthetic)) {
+      setError("Choose the YouTube audience and altered/synthetic content settings.");
+      return;
+    }
+    if (enabled && publishToYouTube && !window.confirm(
+      `Enable automatic YouTube uploads with ${youtubePrivacy} visibility after each daily video is created? Future uploads will not ask for confirmation. The selected audience and content disclosure apply to every generated video.`,
+    )) return;
     setBusy(true);
     setMessage("");
     setError("");
@@ -67,7 +71,11 @@ export default function DailyScheduleSettings() {
       const response = await fetch(`${basePath}/api/schedule`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ enabled, runTime, timezone, forceRecreate, publishToFacebook }),
+        body: JSON.stringify({
+          enabled, runTime, timezone, forceRecreate, publishToFacebook, publishToYouTube, youtubePrivacy,
+          youtubeMadeForKids: youtubeAudience ? youtubeAudience === "yes" : null,
+          youtubeContainsSyntheticMedia: youtubeSynthetic ? youtubeSynthetic === "yes" : null,
+        }),
       });
       const body = await response.json() as { schedule?: Schedule; error?: string };
       if (!response.ok || !body.schedule) throw new Error(body.error || "Could not save daily schedule.");
@@ -92,6 +100,10 @@ export default function DailyScheduleSettings() {
       setSchedule(null);
       setEnabled(false);
       setPublishToFacebook(false);
+      setPublishToYouTube(false);
+      setYoutubePrivacy("private");
+      setYoutubeAudience("");
+      setYoutubeSynthetic("");
       setMessage("Daily pipeline schedule deleted.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not delete daily schedule.");
@@ -132,6 +144,28 @@ export default function DailyScheduleSettings() {
           <input type="checkbox" checked={publishToFacebook} onChange={(event) => setPublishToFacebook(event.target.checked)} disabled={busy} />
           Publish to Facebook after video creation
         </label>
+        <label className={styles.scheduleToggle}>
+          <input type="checkbox" checked={publishToYouTube} onChange={(event) => setPublishToYouTube(event.target.checked)} disabled={busy} />
+          Publish to YouTube after video creation
+        </label>
+        {publishToYouTube ? <>
+          <label>YouTube visibility
+            <select value={youtubePrivacy} onChange={(event) => setYoutubePrivacy(event.target.value as Schedule["youtubePrivacy"])} disabled={busy}>
+              <option value="private">Private</option><option value="unlisted">Unlisted</option><option value="public">Public</option>
+            </select>
+          </label>
+          <label>YouTube: Made for kids?
+            <select value={youtubeAudience} onChange={(event) => setYoutubeAudience(event.target.value)} disabled={busy}>
+              <option value="">Choose audience</option><option value="no">No</option><option value="yes">Yes</option>
+            </select>
+          </label>
+          <label>YouTube: Realistic altered or synthetic content?
+            <select value={youtubeSynthetic} onChange={(event) => setYoutubeSynthetic(event.target.value)} disabled={busy}>
+              <option value="">Choose disclosure</option><option value="no">No</option><option value="yes">Yes</option>
+            </select>
+          </label>
+          <p className={styles.scheduleDescription}>Uses the generated title and caption. These settings apply to every daily video. If both platforms are selected, Facebook uploads first, then YouTube. Track upload runs in Run History.</p>
+        </> : null}
         <button type="button" className="primary" onClick={() => void save()} disabled={busy}>
           {busy ? "Saving..." : "Save Schedule"}
         </button>

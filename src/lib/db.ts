@@ -34,6 +34,7 @@ export async function ensureVideoCreatorSchema() {
        ON video_creator_runs (status, started_at DESC)`);
       await query(`ALTER TABLE video_creator_runs ADD COLUMN IF NOT EXISTS output_video TEXT`);
       await query(`ALTER TABLE video_creator_runs ADD COLUMN IF NOT EXISTS runner_pid INTEGER`);
+      await query(`ALTER TABLE video_creator_runs ADD COLUMN IF NOT EXISTS after_run_publish JSONB`);
       // Replace the original CHECK so existing installations accept YouTube runs.
       await query(`ALTER TABLE video_creator_runs DROP CONSTRAINT IF EXISTS video_creator_runs_action_check,
         ADD CONSTRAINT video_creator_runs_action_check
@@ -67,6 +68,11 @@ export async function ensureVideoCreatorSchema() {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )`);
       await query(`ALTER TABLE video_creator_schedule ADD COLUMN IF NOT EXISTS publish_to_facebook BOOLEAN NOT NULL DEFAULT FALSE`);
+      await query(`ALTER TABLE video_creator_schedule
+        ADD COLUMN IF NOT EXISTS publish_to_youtube BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS youtube_privacy TEXT NOT NULL DEFAULT 'private',
+        ADD COLUMN IF NOT EXISTS youtube_made_for_kids BOOLEAN,
+        ADD COLUMN IF NOT EXISTS youtube_contains_synthetic_media BOOLEAN`);
       await query(`CREATE TABLE IF NOT EXISTS video_creator_quota_schedule (
         id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
         enabled BOOLEAN NOT NULL DEFAULT FALSE,

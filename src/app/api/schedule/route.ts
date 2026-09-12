@@ -20,9 +20,16 @@ export async function PUT(request: Request) {
       timezone?: unknown;
       forceRecreate?: unknown;
       publishToFacebook?: unknown;
+      publishToYouTube?: unknown;
+      youtubePrivacy?: unknown;
+      youtubeMadeForKids?: unknown;
+      youtubeContainsSyntheticMedia?: unknown;
     };
     if (typeof body.enabled !== "boolean" || typeof body.runTime !== "string" || typeof body.timezone !== "string") {
       return Response.json({ error: "Invalid daily schedule settings." }, { status: 400 });
+    }
+    if (body.publishToYouTube !== undefined && typeof body.publishToYouTube !== "boolean") {
+      return Response.json({ error: "Publish to YouTube must be a boolean." }, { status: 400 });
     }
     startScheduler();
     const schedule = await updateDailySchedule({
@@ -31,6 +38,10 @@ export async function PUT(request: Request) {
       timezone: body.timezone,
       forceRecreate: body.forceRecreate === true,
       publishToFacebook: body.publishToFacebook === true,
+      publishToYouTube: body.publishToYouTube === true,
+      youtubePrivacy: body.youtubePrivacy,
+      youtubeMadeForKids: body.youtubeMadeForKids,
+      youtubeContainsSyntheticMedia: body.youtubeContainsSyntheticMedia,
     });
     return Response.json({ schedule });
   } catch (error) {

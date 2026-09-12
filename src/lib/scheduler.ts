@@ -1,6 +1,7 @@
 import { ensureVideoCreatorSchema, query } from "@/lib/db";
 import { startGeneration } from "@/lib/pipeline";
 import { startQuotaScheduler } from "@/lib/quotaScheduler";
+import { validateYouTubePublishSettings, youtubeConfiguration } from "@/lib/youtube";
 
 export type DailySchedule = {
   enabled: boolean;
@@ -8,6 +9,10 @@ export type DailySchedule = {
   timezone: string;
   forceRecreate: boolean;
   publishToFacebook: boolean;
+  publishToYouTube: boolean;
+  youtubePrivacy: "private" | "unlisted" | "public";
+  youtubeMadeForKids: boolean | null;
+  youtubeContainsSyntheticMedia: boolean | null;
   lastRunDate: string | null;
   lastRunId: number | null;
   lastError: string | null;
@@ -20,6 +25,10 @@ type ScheduleRow = {
   timezone: string;
   force_recreate: boolean;
   publish_to_facebook: boolean;
+  publish_to_youtube: boolean;
+  youtube_privacy: DailySchedule["youtubePrivacy"];
+  youtube_made_for_kids: boolean | null;
+  youtube_contains_synthetic_media: boolean | null;
   last_run_date: string | null;
   last_run_id: number | null;
   last_error: string | null;
@@ -33,6 +42,10 @@ function mapSchedule(row: ScheduleRow): DailySchedule {
     timezone: row.timezone,
     forceRecreate: row.force_recreate,
     publishToFacebook: row.publish_to_facebook,
+    publishToYouTube: row.publish_to_youtube,
+    youtubePrivacy: row.youtube_privacy,
+    youtubeMadeForKids: row.youtube_made_for_kids,
+    youtubeContainsSyntheticMedia: row.youtube_contains_synthetic_media,
     lastRunDate: row.last_run_date,
     lastRunId: row.last_run_id,
     lastError: row.last_error,
@@ -59,7 +72,8 @@ export function validateTimezone(value: string) {
 export async function getDailySchedule() {
   await ensureVideoCreatorSchema();
   const result = await query<ScheduleRow>(`SELECT enabled, run_time::text, timezone, force_recreate,
-    publish_to_facebook,
+    publish_to_facebook, publish_to_youtube, youtube_privacy,
+    youtube_made_for_kids, youtube_contains_synthetic_media,
     last_run_date::text, last_run_id, last_error, updated_at::text
     FROM video_creator_schedule WHERE id = 1`);
   if (!result.rows[0]) throw new Error("Daily schedule is not configured.");
@@ -72,21 +86,39 @@ export async function updateDailySchedule(input: {
   timezone: string;
   forceRecreate: boolean;
   publishToFacebook: boolean;
+  publishToYouTube?: boolean;
+  youtubePrivacy?: unknown;
+  youtubeMadeForKids?: unknown;
+  youtubeContainsSyntheticMedia?: unknown;
 }) {
   const runTime = validateTime(input.runTime);
   const timezone = validateTimezone(input.timezone);
+  const youtube = input.publishToYouTube ? validateYouTubePublishSettings({
+    privacy: input.youtubePrivacy,
+    madeForKids: input.youtubeMadeForKids,
+    containsSyntheticMedia: input.youtubeContainsSyntheticMedia,
+  }) : null;
+  if (input.enabled && youtube && !youtubeConfiguration().configured) {
+    throw new Error("Configure YouTube OAuth credentials in .env.local before enabling automatic uploads.");
+  }
   await ensureVideoCreatorSchema();
   const result = await query<ScheduleRow>(`INSERT INTO video_creator_schedule
-    (id, enabled, run_time, timezone, force_recreate, publish_to_facebook, last_error, updated_at)
-    VALUES (1, $1, $2::time, $3, $4, $5, NULL, NOW())
+    (id, enabled, run_time, timezone, force_recreate, publish_to_facebook,
+      publish_to_youtube, youtube_privacy, youtube_made_for_kids, youtube_contains_synthetic_media, last_error, updated_at)
+    VALUES (1, $1, $2::time, $3, $4, $5, $6, $7, $8, $9, NULL, NOW())
     ON CONFLICT (id) DO UPDATE SET
       enabled = EXCLUDED.enabled, run_time = EXCLUDED.run_time, timezone = EXCLUDED.timezone,
       force_recreate = EXCLUDED.force_recreate, publish_to_facebook = EXCLUDED.publish_to_facebook,
+      publish_to_youtube = EXCLUDED.publish_to_youtube, youtube_privacy = EXCLUDED.youtube_privacy,
+      youtube_made_for_kids = EXCLUDED.youtube_made_for_kids,
+      youtube_contains_synthetic_media = EXCLUDED.youtube_contains_synthetic_media,
       last_error = NULL, updated_at = NOW()
     RETURNING enabled, run_time::text, timezone, force_recreate,
-      publish_to_facebook,
+      publish_to_facebook, publish_to_youtube, youtube_privacy,
+      youtube_made_for_kids, youtube_contains_synthetic_media,
       last_run_date::text, last_run_id, last_error, updated_at::text`,
-    [input.enabled, runTime, timezone, input.forceRecreate, input.publishToFacebook]);
+    [input.enabled, runTime, timezone, input.forceRecreate, input.publishToFacebook,
+      Boolean(youtube), youtube?.privacy ?? "private", youtube?.madeForKids ?? null, youtube?.containsSyntheticMedia ?? null]);
   if (!result.rows[0]) throw new Error("Daily schedule is not configured.");
   return mapSchedule(result.rows[0]);
 }
@@ -131,6 +163,11 @@ async function tick() {
       const run = await startGeneration({
         forceRecreate: schedule.forceRecreate,
         publishToFacebook: schedule.publishToFacebook,
+        youtube: schedule.publishToYouTube ? validateYouTubePublishSettings({
+          privacy: schedule.youtubePrivacy,
+          madeForKids: schedule.youtubeMadeForKids,
+          containsSyntheticMedia: schedule.youtubeContainsSyntheticMedia,
+        }) : undefined,
       });
       await query(`UPDATE video_creator_schedule SET last_run_id = $1, updated_at = NOW() WHERE id = 1`, [run.id]);
     } catch (error) {

@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS video_creator_runs (
   status TEXT NOT NULL DEFAULT 'running' CHECK (status IN ('running', 'success', 'failed')),
   log_path TEXT NOT NULL,
   runner_pid INTEGER,
+  after_run_publish JSONB,
   error TEXT,
   started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   finished_at TIMESTAMPTZ
@@ -28,6 +29,10 @@ CREATE TABLE IF NOT EXISTS video_creator_schedule (
   timezone TEXT NOT NULL DEFAULT 'UTC',
   force_recreate BOOLEAN NOT NULL DEFAULT FALSE,
   publish_to_facebook BOOLEAN NOT NULL DEFAULT FALSE,
+  publish_to_youtube BOOLEAN NOT NULL DEFAULT FALSE,
+  youtube_privacy TEXT NOT NULL DEFAULT 'private',
+  youtube_made_for_kids BOOLEAN,
+  youtube_contains_synthetic_media BOOLEAN,
   last_run_date DATE,
   last_run_id BIGINT,
   last_error TEXT,

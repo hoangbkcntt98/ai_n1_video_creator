@@ -58,13 +58,26 @@
 6. Bấm **Confirm YouTube Upload**, xác nhận. App tạo run `youtube_publish`; xem tiến độ/log ngay trong tùy chọn upload hoặc Dashboard → Run History.
 7. Upload thành công lưu YouTube video ID, thời gian upload và visibility YouTube trả về. Mở lại **Upload to YouTube** tại video để xem thông tin và link **View on YouTube**. Upload lại sẽ tạo video YouTube mới; app cảnh báo trước khi xác nhận.
 
-Không còn màn YouTube riêng. Đường dẫn `/youtube` cũ chuyển về Dashboard. Trường lịch bên cạnh chỉ áp dụng cho Facebook, không hẹn giờ YouTube.
+Không còn màn YouTube riêng. Đường dẫn `/youtube` cũ chuyển về Dashboard. Trường lịch bên cạnh video chỉ áp dụng cho Facebook, không hẹn giờ công khai video YouTube.
+
+## Tự động upload sau Daily Pipeline Schedule
+
+1. Dashboard → **AUTOMATION → Daily Pipeline Schedule**.
+2. Bật **Publish to YouTube after video creation**.
+3. Chọn visibility, audience và khai báo nội dung. Mặc định **Private**; chọn **Public** nếu muốn công khai sau upload. Những khai báo này áp dụng cho mọi video được tạo bởi lịch.
+4. Bấm **Save Schedule** và xác nhận quyền tự động upload. Khi lịch đang bật, server yêu cầu đủ ba biến OAuth trước khi cho lưu.
+
+- Facebook và YouTube bật/tắt độc lập. Nếu bật cả hai, Facebook upload trước; YouTube chờ Facebook kết thúc. Facebook lỗi vẫn cho phép thử YouTube.
+- Dùng title và caption được pipeline tạo ra. Nội dung vượt giới hạn YouTube báo lỗi, không tự cắt.
+- Mỗi upload có run riêng trong **Run History**. Lỗi tự động upload cũng ghi ở **Last error** của lịch; video đã tạo thành công vẫn giữ trạng thái success.
+- Lựa chọn upload được lưu theo từng run khi bắt đầu tạo video. Sửa/xóa lịch ảnh hưởng lần chạy tiếp theo, không hủy upload đã được run hiện tại nhận.
+- Khi app restart, ý định upload chưa được nhận xử lý được khôi phục. Mỗi ý định chỉ được nhận một lần để tránh đăng trùng. Nếu app dừng đúng lúc đã nhận xử lý nhưng chưa tạo upload run, kiểm tra Run History và kênh trước khi upload thủ công; không tự retry trường hợp không rõ kết quả.
 
 Thời gian upload không phải thời gian công khai. YouTube có thể còn xử lý video sau khi API nhận file.
 
 ## Giới hạn và vận hành
 
-- Đây là upload thủ công, chưa tích hợp tự động vào Daily/Quota Schedule và chưa hỗ trợ hẹn giờ YouTube.
+- Hỗ trợ upload thủ công và tự động sau Daily Schedule. Chưa tích hợp Quota Schedule hoặc hẹn giờ công khai bằng YouTube `publishAt`.
 - App chỉ cho một pipeline/upload hoạt động đồng thời. Nếu đang có run khác, upload trả lỗi chờ.
 - Worker Python chạy detached: đóng tab không hủy upload. App có thể khôi phục kết quả từ log sau restart; nếu chính worker bị dừng, không tự upload lại.
 - Upload dùng resumable chunks, kiểm tra offset trước khi retry lỗi mạng để tránh gửi lại toàn bộ video.
