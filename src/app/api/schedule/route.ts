@@ -16,6 +16,10 @@ export async function PUT(request: Request) {
   try {
     const body = await request.json() as {
       enabled?: unknown;
+      mode?: unknown;
+      startsAt?: unknown;
+      intervalHours?: unknown;
+      videosPerRun?: unknown;
       runTime?: unknown;
       timezone?: unknown;
       forceRecreate?: unknown;
@@ -25,7 +29,9 @@ export async function PUT(request: Request) {
       youtubeMadeForKids?: unknown;
       youtubeContainsSyntheticMedia?: unknown;
     };
-    if (typeof body.enabled !== "boolean" || typeof body.runTime !== "string" || typeof body.timezone !== "string") {
+    if (typeof body.enabled !== "boolean" || typeof body.timezone !== "string" ||
+        (body.mode !== "interval" && typeof body.runTime !== "string") ||
+        (body.runTime !== undefined && typeof body.runTime !== "string")) {
       return Response.json({ error: "Invalid daily schedule settings." }, { status: 400 });
     }
     if (body.publishToYouTube !== undefined && typeof body.publishToYouTube !== "boolean") {
@@ -34,7 +40,11 @@ export async function PUT(request: Request) {
     startScheduler();
     const schedule = await updateDailySchedule({
       enabled: body.enabled,
-      runTime: body.runTime,
+      mode: body.mode,
+      startsAt: body.startsAt,
+      intervalHours: body.intervalHours,
+      videosPerRun: body.videosPerRun,
+      runTime: typeof body.runTime === "string" ? body.runTime : "09:00",
       timezone: body.timezone,
       forceRecreate: body.forceRecreate === true,
       publishToFacebook: body.publishToFacebook === true,

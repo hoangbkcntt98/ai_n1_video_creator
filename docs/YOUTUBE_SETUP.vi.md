@@ -88,7 +88,7 @@ Không còn màn YouTube riêng. Đường dẫn `/youtube` cũ chuyển về Da
 
 ## Tự động upload sau Daily Pipeline Schedule
 
-1. Dashboard → **AUTOMATION → Daily Pipeline Schedule**.
+1. Dashboard → **AUTOMATION → Pipeline Schedule**. Chọn lịch hằng ngày hoặc khoảng giờ theo [hướng dẫn lịch tạo video](PIPELINE_SCHEDULE.vi.md).
 2. Bật **Publish to YouTube after video creation**.
 3. Chọn visibility, audience và khai báo nội dung. Mặc định **Private**; chọn **Public** nếu muốn công khai sau upload. Những khai báo này áp dụng cho mọi video được tạo bởi lịch.
 4. Bấm **Save Schedule** và xác nhận quyền tự động upload. Khi lịch đang bật, server yêu cầu đủ ba biến OAuth trước khi cho lưu.

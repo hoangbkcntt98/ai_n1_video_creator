@@ -148,6 +148,8 @@
 }
 
 .scheduleFields input[type="time"],
+.scheduleFields input[type="datetime-local"],
+.scheduleFields input[type="number"],
 .scheduleFields input[list],
 .scheduleFields select {
   min-height: 40px;

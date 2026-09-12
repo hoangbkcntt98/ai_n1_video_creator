@@ -35,6 +35,11 @@ export async function ensureVideoCreatorSchema() {
       await query(`ALTER TABLE video_creator_runs ADD COLUMN IF NOT EXISTS output_video TEXT`);
       await query(`ALTER TABLE video_creator_runs ADD COLUMN IF NOT EXISTS runner_pid INTEGER`);
       await query(`ALTER TABLE video_creator_runs ADD COLUMN IF NOT EXISTS after_run_publish JSONB`);
+      await query(`ALTER TABLE video_creator_runs
+        ADD COLUMN IF NOT EXISTS schedule_job_id BIGINT,
+        ADD COLUMN IF NOT EXISTS after_run_pending BOOLEAN NOT NULL DEFAULT FALSE`);
+      await query(`CREATE UNIQUE INDEX IF NOT EXISTS video_creator_run_schedule_job_idx
+        ON video_creator_runs (schedule_job_id) WHERE schedule_job_id IS NOT NULL`);
       // Replace the original CHECK so existing installations accept YouTube runs.
       await query(`ALTER TABLE video_creator_runs DROP CONSTRAINT IF EXISTS video_creator_runs_action_check,
         ADD CONSTRAINT video_creator_runs_action_check
@@ -73,6 +78,23 @@ export async function ensureVideoCreatorSchema() {
         ADD COLUMN IF NOT EXISTS youtube_privacy TEXT NOT NULL DEFAULT 'private',
         ADD COLUMN IF NOT EXISTS youtube_made_for_kids BOOLEAN,
         ADD COLUMN IF NOT EXISTS youtube_contains_synthetic_media BOOLEAN`);
+      await query(`ALTER TABLE video_creator_schedule
+        ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'daily' CHECK (mode IN ('daily', 'interval')),
+        ADD COLUMN IF NOT EXISTS starts_at TIMESTAMPTZ,
+        ADD COLUMN IF NOT EXISTS interval_hours INTEGER NOT NULL DEFAULT 5 CHECK (interval_hours BETWEEN 1 AND 8760),
+        ADD COLUMN IF NOT EXISTS videos_per_run INTEGER NOT NULL DEFAULT 1 CHECK (videos_per_run BETWEEN 1 AND 100),
+        ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 1,
+        ADD COLUMN IF NOT EXISTS last_scheduled_at TIMESTAMPTZ`);
+      await query(`CREATE TABLE IF NOT EXISTS video_creator_schedule_jobs (
+        id BIGSERIAL PRIMARY KEY,
+        schedule_id INTEGER NOT NULL REFERENCES video_creator_schedule(id) ON DELETE CASCADE,
+        schedule_revision BIGINT NOT NULL,
+        scheduled_for TIMESTAMPTZ NOT NULL,
+        position INTEGER NOT NULL,
+        settings JSONB NOT NULL,
+        cancelled BOOLEAN NOT NULL DEFAULT FALSE,
+        UNIQUE (schedule_id, schedule_revision, scheduled_for, position)
+      )`);
       await query(`CREATE TABLE IF NOT EXISTS video_creator_quota_schedule (
         id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
         enabled BOOLEAN NOT NULL DEFAULT FALSE,

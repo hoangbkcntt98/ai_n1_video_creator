@@ -32,20 +32,48 @@ async function writeRuntimeConfig() {
   return configPath;
 }
 
-async function createRun(action: RunAction, patternId?: number, patternName?: string, afterRunPublish?: AfterRunPublish) {
+async function createRun(action: RunAction, patternId?: number, patternName?: string, afterRunPublish?: AfterRunPublish, scheduleJobId?: number) {
   await ensureVideoCreatorSchema();
   const logDir = path.join(appConfig.logDir(), "video-creator", "runs");
   await fs.mkdir(logDir, { recursive: true });
   const logPath = path.join(logDir, `${safeLogName()}-${action}.log`);
-  const result = await query<Run>(`INSERT INTO video_creator_runs (action, pattern_id, pattern_name, log_path, after_run_publish)
-    VALUES ($1, $2, $3, $4, $5::jsonb) RETURNING *`,
-    [action, patternId ?? null, patternName ?? null, logPath, afterRunPublish ? JSON.stringify(afterRunPublish) : null]);
+  const values = [action, patternId ?? null, patternName ?? null, logPath, afterRunPublish ? JSON.stringify(afterRunPublish) : null];
+  const result = scheduleJobId === undefined
+    ? await query<Run>(`INSERT INTO video_creator_runs (action, pattern_id, pattern_name, log_path, after_run_publish, after_run_pending)
+      VALUES ($1, $2, $3, $4, $5::jsonb, $5::jsonb IS NOT NULL) RETURNING *`, values)
+    : await query<Run>(`INSERT INTO video_creator_runs
+        (action, pattern_id, pattern_name, log_path, after_run_publish, after_run_pending, schedule_job_id)
+      SELECT $1, $2, $3, $4, $5::jsonb, $5::jsonb IS NOT NULL, jobs.id
+      FROM video_creator_schedule_jobs jobs
+      JOIN video_creator_schedule schedule ON schedule.id = jobs.schedule_id
+      WHERE jobs.id = $6 AND NOT jobs.cancelled AND schedule.enabled
+        AND jobs.schedule_revision = schedule.revision
+        AND NOT EXISTS (SELECT 1 FROM video_creator_runs WHERE schedule_job_id = jobs.id)
+        AND NOT EXISTS (SELECT 1 FROM video_creator_runs
+          WHERE status = 'running' OR after_run_pending OR after_run_publish IS NOT NULL)
+      FOR UPDATE OF jobs, schedule
+      RETURNING *`, [...values, scheduleJobId]);
+  if (!result.rows[0]) throw new Error("Scheduled video is no longer pending.");
   return result.rows[0];
 }
 
 // Persist intent on the source run before starting Python. Claim once after the
 // worker ends, so restart recovery cannot launch duplicate external uploads.
-async function publishAfterRun(run: Pick<Run, "id" | "log_path" | "action">, outputVideo?: string) {
+const postRunTasks = new Map<number, Promise<void>>();
+
+function publishAfterRun(run: Pick<Run, "id" | "log_path" | "action">, outputVideo?: string) {
+  const existing = postRunTasks.get(run.id);
+  if (existing) return existing;
+  const task = performPublishAfterRun(run, outputVideo).finally(async () => {
+    // Keep the schedule queue waiting while the upload continuation is being
+    // prepared, including the gap after its JSON intent has been claimed.
+    await query(`UPDATE video_creator_runs SET after_run_pending = FALSE WHERE id = $1`, [run.id]);
+  }).finally(() => { postRunTasks.delete(run.id); });
+  postRunTasks.set(run.id, task);
+  return task;
+}
+
+async function performPublishAfterRun(run: Pick<Run, "id" | "log_path" | "action">, outputVideo?: string) {
   const result = await query<{ after_run_publish: AfterRunPublish; status: string; error: string | null }>(`
     WITH pending AS (
       SELECT id, after_run_publish FROM video_creator_runs
@@ -226,7 +254,7 @@ export async function startYouTubePublish(input: YouTubeUploadInput, afterRunPub
     });
   } catch (error) {
     await finishRun(run.id, "failed", error instanceof Error ? error.message : "Could not start YouTube upload.");
-    await query(`UPDATE video_creator_runs SET after_run_publish = NULL WHERE id = $1`, [run.id]);
+    await query(`UPDATE video_creator_runs SET after_run_publish = NULL, after_run_pending = FALSE WHERE id = $1`, [run.id]);
     throw error;
   }
   return run;
@@ -247,6 +275,7 @@ export async function startGeneration(input: {
   forceRecreate?: boolean;
   publishToFacebook?: boolean;
   youtube?: YouTubePublishSettings;
+  scheduleJobId?: number;
 }) {
   const selected = input.patternId !== undefined;
   if (selected && (!Number.isInteger(input.patternId) || input.patternId! <= 0 || !input.patternName?.trim())) {
@@ -256,7 +285,7 @@ export async function startGeneration(input: {
   if (youtube && !youtubeConfiguration().configured) throw new Error("Configure YouTube OAuth credentials in .env.local first.");
   const configPath = await writeRuntimeConfig();
   const run = await createRun(selected ? "generate_pattern" : "create_next", input.patternId, input.patternName?.trim(),
-    input.publishToFacebook || youtube ? { facebook: input.publishToFacebook, youtube } : undefined);
+    input.publishToFacebook || youtube ? { facebook: input.publishToFacebook, youtube } : undefined, input.scheduleJobId);
   const args = ["grammar_pipeline_module/jlpt_n1_video_pipeline.py", "--config", configPath, "--step", "all", "--skip-publish"];
   if (selected) args.push("--pattern-id", String(input.patternId), "--pattern-name", input.patternName!.trim());
   if (input.forceRecreate) args.push("--force-recreate");
@@ -325,7 +354,7 @@ export async function startFacebookPublish(
   } catch (error) {
     await finishRun(run.id, "failed", error instanceof Error ? error.message : "Could not start Facebook upload.");
     // The caller handles a start failure; leave no second continuation to retry.
-    await query(`UPDATE video_creator_runs SET after_run_publish = NULL WHERE id = $1`, [run.id]);
+    await query(`UPDATE video_creator_runs SET after_run_publish = NULL, after_run_pending = FALSE WHERE id = $1`, [run.id]);
     throw error;
   }
   return run;
@@ -378,7 +407,7 @@ export async function resumeActiveRuns() {
   // Also cover restart between marking a worker finished and claiming its
   // publishing continuation. Runs without an explicit saved opt-in are ignored.
   const pending = await query<Run>(`SELECT * FROM video_creator_runs
-    WHERE status <> 'running' AND after_run_publish IS NOT NULL ORDER BY id`);
+    WHERE status <> 'running' AND (after_run_publish IS NOT NULL OR after_run_pending) ORDER BY id`);
   for (const run of pending.rows) {
     await publishAfterRun(run, run.output_video || undefined);
   }

@@ -4,6 +4,9 @@ export async function register() {
     await resumeActiveRuns().catch(() => {});
     const { recoverAbandonedRuns } = await import("@/lib/db");
     await recoverAbandonedRuns().catch(() => {});
+    // Abandoned PID-less runs may have just become failed; clear/report their
+    // publishing continuations before the schedule queue checks for busy work.
+    await resumeActiveRuns().catch(() => {});
     const { startScheduler } = await import("@/lib/scheduler");
     startScheduler();
   }

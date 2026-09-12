@@ -19,6 +19,10 @@ const timezoneOptions = [
 export default function DailyScheduleSettings() {
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [runTime, setRunTime] = useState("09:00");
+  const [mode, setMode] = useState<Schedule["mode"]>("daily");
+  const [startsAt, setStartsAt] = useState("");
+  const [intervalHours, setIntervalHours] = useState("5");
+  const [videosPerRun, setVideosPerRun] = useState("4");
   const [timezone, setTimezone] = useState("UTC");
   const [enabled, setEnabled] = useState(false);
   const [forceRecreate, setForceRecreate] = useState(false);
@@ -33,17 +37,22 @@ export default function DailyScheduleSettings() {
 
   useEffect(() => {
     const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    fetch(`${basePath}/api/schedule`, { cache: "no-store" })
+    let disposed = false;
+    const readSchedule = () => fetch(`${basePath}/api/schedule`, { cache: "no-store" })
       .then(async (response) => {
         const body = await response.json() as { schedule?: Schedule; error?: string };
         if (response.status === 404) return null;
         if (!response.ok || !body.schedule) throw new Error(body.error || "Could not read daily schedule.");
         return body.schedule;
-      })
-      .then((value) => {
-        if (!value) return;
+      });
+    readSchedule().then((value) => {
+        if (!value || disposed) return;
         setSchedule(value);
         setRunTime(value.runTime);
+        setMode(value.mode ?? "daily");
+        setStartsAt(value.startsAt ?? "");
+        setIntervalHours(String(value.intervalHours ?? 5));
+        setVideosPerRun(String(value.mode === "interval" ? value.videosPerRun : 4));
         setTimezone(value.timezone || browserTimezone || "UTC");
         setEnabled(value.enabled);
         setForceRecreate(value.forceRecreate);
@@ -53,16 +62,29 @@ export default function DailyScheduleSettings() {
         setYoutubeAudience(typeof value.youtubeMadeForKids === "boolean" ? value.youtubeMadeForKids ? "yes" : "no" : "");
         setYoutubeSynthetic(typeof value.youtubeContainsSyntheticMedia === "boolean" ? value.youtubeContainsSyntheticMedia ? "yes" : "no" : "");
       })
-      .catch((reason) => setError(reason instanceof Error ? reason.message : "Could not read daily schedule."));
+      .catch((reason) => {
+        if (!disposed) setError(reason instanceof Error ? reason.message : "Could not read daily schedule.");
+      });
+    // Refresh queue/next-run status without overwriting fields being edited.
+    const timer = setInterval(() => {
+      void readSchedule().then((value) => { if (!disposed) setSchedule(value); }).catch(() => {});
+    }, 15_000);
+    return () => { disposed = true; clearInterval(timer); };
   }, []);
 
   async function save() {
+    if (mode === "interval" && (!startsAt || !Number.isInteger(Number(intervalHours)) ||
+        Number(intervalHours) < 1 || Number(intervalHours) > 8760 ||
+        !Number.isInteger(Number(videosPerRun)) || Number(videosPerRun) < 1 || Number(videosPerRun) > 100)) {
+      setError("Choose a start date/time, interval of 1–8760 whole hours, and 1–100 videos per batch.");
+      return;
+    }
     if (publishToYouTube && (!youtubeAudience || !youtubeSynthetic)) {
       setError("Choose the YouTube audience and altered/synthetic content settings.");
       return;
     }
     if (enabled && publishToYouTube && !window.confirm(
-      `Enable automatic YouTube uploads with ${youtubePrivacy} visibility after each daily video is created? Future uploads will not ask for confirmation. The selected audience and content disclosure apply to every generated video.`,
+      `Enable automatic YouTube uploads with ${youtubePrivacy} visibility after each scheduled video is created? Future uploads will not ask for confirmation. The selected audience and content disclosure apply to every generated video.`,
     )) return;
     setBusy(true);
     setMessage("");
@@ -73,6 +95,7 @@ export default function DailyScheduleSettings() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           enabled, runTime, timezone, forceRecreate, publishToFacebook, publishToYouTube, youtubePrivacy,
+          mode, startsAt, intervalHours: Number(intervalHours), videosPerRun: Number(videosPerRun),
           youtubeMadeForKids: youtubeAudience ? youtubeAudience === "yes" : null,
           youtubeContainsSyntheticMedia: youtubeSynthetic ? youtubeSynthetic === "yes" : null,
         }),
@@ -80,7 +103,9 @@ export default function DailyScheduleSettings() {
       const body = await response.json() as { schedule?: Schedule; error?: string };
       if (!response.ok || !body.schedule) throw new Error(body.error || "Could not save daily schedule.");
       setSchedule(body.schedule);
-      setMessage(enabled ? `Daily pipeline enabled at ${body.schedule.runTime} (${body.schedule.timezone}).` : "Daily pipeline disabled.");
+      setMessage(!enabled ? "Pipeline schedule disabled." : body.schedule.mode === "interval"
+        ? `Create ${body.schedule.videosPerRun} videos every ${body.schedule.intervalHours} hours from ${body.schedule.startsAt?.replace("T", " ")} (${body.schedule.timezone}).`
+        : `Daily pipeline enabled at ${body.schedule.runTime} (${body.schedule.timezone}).`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not save daily schedule.");
     } finally {
@@ -89,7 +114,7 @@ export default function DailyScheduleSettings() {
   }
 
   async function remove() {
-    if (!window.confirm("Delete daily pipeline schedule?")) return;
+    if (!window.confirm("Delete pipeline schedule and cancel videos still queued? Running videos and their uploads will continue.")) return;
     setBusy(true);
     setMessage("");
     setError("");
@@ -99,12 +124,16 @@ export default function DailyScheduleSettings() {
       if (!response.ok) throw new Error(body.error || "Could not delete daily schedule.");
       setSchedule(null);
       setEnabled(false);
+      setMode("daily");
+      setStartsAt("");
+      setIntervalHours("5");
+      setVideosPerRun("4");
       setPublishToFacebook(false);
       setPublishToYouTube(false);
       setYoutubePrivacy("private");
       setYoutubeAudience("");
       setYoutubeSynthetic("");
-      setMessage("Daily pipeline schedule deleted.");
+      setMessage("Pipeline schedule deleted.");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not delete daily schedule.");
     } finally {
@@ -117,25 +146,49 @@ export default function DailyScheduleSettings() {
       <div className={styles.sectionHeading}>
         <div>
           <p className="eyebrow">AUTOMATION</p>
-          <h2>Daily Pipeline Schedule</h2>
+          <h2>Pipeline Schedule</h2>
         </div>
         <span className={enabled ? styles.scheduleEnabled : styles.scheduleDisabled}>{enabled ? "Enabled" : "Disabled"}</span>
       </div>
-      <p className={styles.scheduleDescription}>Run the next grammar pattern automatically once per day.</p>
+      <p className={styles.scheduleDescription}>Create videos daily or repeat a batch every N hours from a chosen start time. Videos and their selected uploads run sequentially.</p>
       <div className={styles.scheduleFields}>
         <label className={styles.scheduleToggle}>
           <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} disabled={busy} />
-          Enable daily run
+          Enable schedule
         </label>
         <label>
+          Schedule mode
+          <select value={mode} onChange={(event) => setMode(event.target.value as Schedule["mode"])} disabled={busy}>
+            <option value="daily">Daily (1 video)</option>
+            <option value="interval">Repeat every N hours</option>
+          </select>
+        </label>
+        {mode === "daily" ? <label>
           Time
           <input type="time" value={runTime} onChange={(event) => setRunTime(event.target.value)} disabled={busy} />
-        </label>
+        </label> : <>
+          <label>
+            Start date and time
+            <input type="datetime-local" step="1" value={startsAt} onChange={(event) => setStartsAt(event.target.value)} disabled={busy} />
+          </label>
+          <label>
+            Repeat every (hours)
+            <input type="number" min="1" max="8760" step="1" value={intervalHours} onChange={(event) => setIntervalHours(event.target.value)} disabled={busy} />
+          </label>
+          <label>
+            Videos per batch
+            <input type="number" min="1" max="100" step="1" value={videosPerRun} onChange={(event) => setVideosPerRun(event.target.value)} disabled={busy} />
+          </label>
+        </>}
         <label>
           Timezone
           <input list="schedule-timezones" value={timezone} onChange={(event) => setTimezone(event.target.value)} disabled={busy} />
           <datalist id="schedule-timezones">{timezoneOptions.map((option) => <option value={option} key={option} />)}</datalist>
         </label>
+        {mode === "interval" ? <p className={styles.scheduleDescription}>
+          Start time uses the timezone above, not the server timezone. For example: 4 videos every 5 hours from 12/09/2026 15:00:00.
+          {" "}Batches stay anchored to that start. If busy or offline, finish queued videos first, then run only the latest missed batch.
+        </p> : null}
         <label className={styles.scheduleToggle}>
           <input type="checkbox" checked={forceRecreate} onChange={(event) => setForceRecreate(event.target.checked)} disabled={busy} />
           Force recreate existing content
@@ -164,13 +217,18 @@ export default function DailyScheduleSettings() {
               <option value="">Choose disclosure</option><option value="no">No</option><option value="yes">Yes</option>
             </select>
           </label>
-          <p className={styles.scheduleDescription}>Uses the generated title and caption. These settings apply to every daily video. If both platforms are selected, Facebook uploads first, then YouTube. Track upload runs in Run History.</p>
+          <p className={styles.scheduleDescription}>Uses the generated title and caption. These settings apply to every scheduled video. If both platforms are selected, Facebook uploads first, then YouTube. Track upload runs in Run History.</p>
         </> : null}
         <button type="button" className="primary" onClick={() => void save()} disabled={busy}>
           {busy ? "Saving..." : "Save Schedule"}
         </button>
         {schedule ? <button type="button" onClick={() => void remove()} disabled={busy}>Delete Schedule</button> : null}
       </div>
+      <p className={styles.scheduleDescription}>Saving or disabling replaces the schedule and cancels videos not yet started. Running videos and their uploads continue.</p>
+      {schedule?.nextRunAt ? <p className={styles.scheduleMeta}>Next batch: {new Intl.DateTimeFormat("en-GB", {
+        timeZone: schedule.timezone, dateStyle: "short", timeStyle: "medium",
+      }).format(new Date(schedule.nextRunAt))} ({schedule.timezone})</p> : null}
+      {schedule?.pendingVideos ? <p className={styles.scheduleMeta}>Videos queued: {schedule.pendingVideos}</p> : null}
       {schedule?.lastRunDate ? <p className={styles.scheduleMeta}>Last run: {schedule.lastRunDate}{schedule.lastRunId ? ` · Run #${schedule.lastRunId}` : ""}</p> : null}
       {schedule?.lastError ? <p className={styles.scheduleError}>Last error: {schedule.lastError}</p> : null}
       {message ? <p className={styles.scheduleSuccess} role="status">{message}</p> : null}

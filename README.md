@@ -7,6 +7,7 @@
  - Dashboard quản lý video và pipeline runs
  - Tạo pipeline video từ grammar patterns JLPT N1
  - Theo dõi log Python realtime
+ - Lịch tạo video hằng ngày hoặc lặp theo khoảng giờ, nhiều video mỗi đợt. Hướng dẫn: [Pipeline schedule](docs/PIPELINE_SCHEDULE.vi.md).
  - Upload video lên Facebook
  - Upload YouTube qua OAuth API, chọn visibility và theo dõi run. Hướng dẫn: [YouTube setup](docs/YOUTUBE_SETUP.vi.md).
  - Quản lý grammar patterns với trạng thái
