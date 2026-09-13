@@ -12,7 +12,7 @@ function load(file, mocks, extra = {}) {
   vm.runInNewContext(source, { exports, require: (name) => {
     if (!(name in mocks)) throw new Error(`Unexpected import ${name}`);
     return mocks[name];
-  }, process, Buffer, Error, Response, Date, console, ...extra });
+  }, process, Buffer, Error, Response, Request, URL, Date, console, ...extra });
   return exports;
 }
 const youtube = load("src/lib/youtube.ts", {});
@@ -52,7 +52,7 @@ test("interval validation rejects invalid calendar dates, ranges, types and mode
     { intervalHours: 0 }, { intervalHours: 1.5 }, { intervalHours: 8761 }, { intervalHours: "5" },
     { videosPerRun: 0 }, { videosPerRun: 101 }, { videosPerRun: 1.5 }, { videosPerRun: "4" },
     { timezone: "Not/A_Timezone" }, { mode: "weekly" }, { mode: null },
-  ]) await assert.rejects(api.updateDailySchedule({ ...base, ...change }));
+  ]) await assert.rejects(api.updatePipelineSchedule({ ...base, ...change }));
   assert.equal(api.validateIntervalSettings({ ...base, startsAt: "2028-02-29T15:00" }).startsAt, "2028-02-29T15:00:00");
 });
 
@@ -60,33 +60,93 @@ test("interval fields persist without breaking old daily API payloads", async ()
   const calls = [];
   const service = scheduler(async (sql, values) => {
     calls.push({ sql, values });
-    return { rows: [{ enabled: values[0], run_time: values[1], timezone: values[2], mode: values[9],
+    return { rows: [{ id: values[13], enabled: values[0], run_time: values[1], timezone: values[2], mode: values[9],
       starts_at_local: values[10], starts_at: values[10] ? "2026-09-12T08:00:00Z" : null,
       interval_hours: values[11], videos_per_run: values[12], revision: "2" }] };
   });
-  const result = await service.updateDailySchedule(base);
+  const result = await service.updatePipelineSchedule(base);
   assert.equal(result.startsAt, "2026-09-12T15:00:00");
   assert.equal(result.startsAtUtc, "2026-09-12T08:00:00.000Z");
   assert.equal(result.videosPerRun, 4);
   assert.equal(result.intervalHours, 5);
+  assert.equal(result.id, 2);
   assert.match(calls[0].sql, /revision = video_creator_schedule.revision \+ 1/);
-  const daily = await service.updateDailySchedule({ ...base, mode: undefined, startsAt: undefined, intervalHours: undefined, videosPerRun: undefined });
+  const daily = await service.updatePipelineSchedule({ ...base, mode: undefined, startsAt: undefined, intervalHours: undefined, videosPerRun: undefined });
   assert.equal(daily.mode, "daily");
   assert.equal(daily.videosPerRun, 1);
   assert.equal(daily.startsAt, null);
+  assert.equal(daily.id, 1);
 });
 
 test("schedule route accepts interval without irrelevant daily runTime", async () => {
   const calls = [];
   const route = load("src/app/api/schedule/route.ts", {
-    "@/lib/scheduler": { startScheduler() {}, updateDailySchedule: async (input) => { calls.push(input); return input; } },
+    "@/lib/scheduler": { ...api, startScheduler() {}, updatePipelineSchedule: async (input) => { calls.push(input); return input; } },
   });
-  const response = await route.PUT({ json: async () => ({ ...base, runTime: undefined }) });
+  const response = await route.PUT(new Request("http://localhost/api/schedule", {
+    method: "PUT", body: JSON.stringify({ ...base, runTime: undefined }),
+  }));
   assert.equal(response.status, 200);
   assert.equal(calls[0].runTime, "09:00");
   assert.equal(calls[0].startsAt, base.startsAt);
   assert.equal(calls[0].videosPerRun, 4);
-  const bad = await route.PUT({ json: async () => ({ ...base, timezone: 7 }) });
+  const bad = await route.PUT(new Request("http://localhost/api/schedule", {
+    method: "PUT", body: JSON.stringify({ ...base, timezone: 7 }),
+  }));
   assert.equal(bad.status, 400);
   assert.equal(calls.length, 1);
+});
+
+test("GET/DELETE select independent slots and preserve legacy daily default", async () => {
+  const calls = [];
+  const service = scheduler(async (sql, values) => {
+    calls.push({ sql, values });
+    return { rows: sql.startsWith("SELECT") ? [{ id: values[0], mode: values[0] === 1 ? "daily" : "interval", run_time: "09:00" }] : [] };
+  });
+  const route = load("src/app/api/schedule/route.ts", {
+    "@/lib/scheduler": { ...service, startScheduler() {} },
+  });
+  for (const [suffix, id] of [["", 1], ["?mode=daily", 1], ["?mode=interval", 2]]) {
+    const request = new Request(`http://localhost/api/schedule${suffix}`);
+    const read = await route.GET(request);
+    assert.equal(read.status, 200);
+    assert.equal((await read.json()).schedule.id, id);
+    assert.equal((await route.DELETE(request)).status, 200);
+    assert.equal(calls.at(-1).values[0], id);
+    assert.match(calls.at(-1).sql, /WHERE id = \$1/);
+  }
+  const count = calls.length;
+  for (const suffix of ["?mode=weekly", "?mode="]) {
+    assert.equal((await route.GET(new Request(`http://localhost/api/schedule${suffix}`))).status, 400);
+    assert.equal((await route.DELETE(new Request(`http://localhost/api/schedule${suffix}`))).status, 400);
+  }
+  assert.equal(calls.length, count);
+  const empty = load("src/app/api/schedule/route.ts", {
+    "@/lib/scheduler": { ...scheduler(), startScheduler() {} },
+  });
+  for (const mode of ["daily", "interval"]) {
+    assert.equal((await empty.GET(new Request(`http://localhost/api/schedule?mode=${mode}`))).status, 404);
+  }
+});
+
+test("PUT rejects mismatched slots and invalid modes without changing either schedule", async () => {
+  const calls = [];
+  const route = load("src/app/api/schedule/route.ts", {
+    "@/lib/scheduler": { ...api, startScheduler() {}, updatePipelineSchedule: async (input) => { calls.push(input); return input; } },
+  });
+  for (const [suffix, mode] of [
+    ["?mode=daily", "interval"], ["?mode=interval", "daily"], ["?mode=weekly", "daily"],
+    ["", "weekly"], ["", null], ["?mode=", "daily"],
+  ]) {
+    const response = await route.PUT(new Request(`http://localhost/api/schedule${suffix}`, {
+      method: "PUT", body: JSON.stringify({ ...base, mode }),
+    }));
+    assert.equal(response.status, 400);
+  }
+  assert.equal(calls.length, 0);
+  const response = await route.PUT(new Request("http://localhost/api/schedule?mode=interval", {
+    method: "PUT", body: JSON.stringify({ ...base, mode: undefined }),
+  }));
+  assert.equal(response.status, 200);
+  assert.equal(calls[0].mode, "interval");
 });

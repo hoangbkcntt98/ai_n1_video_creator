@@ -180,15 +180,15 @@ test("schedule validates YouTube settings and persists independent Facebook/YouT
   });
   const input = { enabled: true, runTime: "09:00", timezone: "UTC", forceRecreate: false, publishToFacebook: true,
     publishToYouTube: true, youtubePrivacy: "public", youtubeMadeForKids: false, youtubeContainsSyntheticMedia: true };
-  const result = await scheduler.updateDailySchedule(input);
+  const result = await scheduler.updatePipelineSchedule(input);
   assert.equal(result.publishToFacebook, true);
   assert.equal(result.publishToYouTube, true);
   assert.equal(result.youtubePrivacy, "public");
   assert.equal(result.youtubeMadeForKids, false);
   for (const change of [{ youtubePrivacy: "invalid" }, { youtubeMadeForKids: null }, { youtubeContainsSyntheticMedia: null }]) {
-    await assert.rejects(scheduler.updateDailySchedule({ ...input, ...change }));
+    await assert.rejects(scheduler.updatePipelineSchedule({ ...input, ...change }));
   }
   assert.equal(calls.length, 1);
-  const disabled = await scheduler.updateDailySchedule({ ...input, publishToYouTube: false, youtubeMadeForKids: null });
+  const disabled = await scheduler.updatePipelineSchedule({ ...input, publishToYouTube: false, youtubeMadeForKids: null });
   assert.equal(disabled.publishToYouTube, false);
 });

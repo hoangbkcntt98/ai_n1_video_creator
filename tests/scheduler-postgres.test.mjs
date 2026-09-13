@@ -34,10 +34,11 @@ test("PostgreSQL schedule queue integration", { skip: !process.env.SCHEDULE_TEST
     await admin.query(`DROP SCHEMA "${schema}" CASCADE`);
     await admin.end();
   });
-  const db = load("src/lib/db.ts", {
+  const newDb = () => load("src/lib/db.ts", {
     pg: { Pool: class { constructor() { return pool; } } },
     "@/lib/config": { appConfig: { databaseUrl: () => connectionString } },
   });
+  const db = newDb();
   await db.ensureVideoCreatorSchema();
   await pool.query(fs.readFileSync("db/004_interval_schedule.sql", "utf8")); // idempotent migration
   const errors = [];
@@ -88,10 +89,11 @@ test("PostgreSQL schedule queue integration", { skip: !process.env.SCHEDULE_TEST
   const input = { enabled: true, mode: "interval", startsAt: "2026-09-12T15:00:00", intervalHours: 5, videosPerRun: 4,
     runTime: "09:00", timezone: "Asia/Ho_Chi_Minh", forceRecreate: false, publishToFacebook: false };
   const start = new Date("2026-09-12T08:00:00Z");
+  const dailyInput = { ...input, mode: "daily", runTime: "15:00", forceRecreate: true };
   async function reset(changes = {}) {
     await pool.query("TRUNCATE video_creator_runs, video_creator_schedule RESTART IDENTITY CASCADE");
     workers.length = 0; files.clear(); errors.length = 0; configured = true; captionGate = null;
-    return service.updateDailySchedule({ ...input, ...changes });
+    return service.updatePipelineSchedule({ ...input, ...changes });
   }
   async function runs() { return (await pool.query("SELECT * FROM video_creator_runs ORDER BY id")).rows; }
   async function jobs() { return (await pool.query("SELECT * FROM video_creator_schedule_jobs ORDER BY id")).rows; }
@@ -105,12 +107,148 @@ test("PostgreSQL schedule queue integration", { skip: !process.env.SCHEDULE_TEST
     await workers.find((worker) => worker.pid === run.runner_pid).listeners("close")[0](code);
   }
 
+  for (const mode of ["daily", "interval"]) {
+    for (const method of ["runtime", "sql"]) {
+      await t.test(`${method} migration preserves legacy ${mode} schedule, queued jobs and run history`, async () => {
+        await pool.query("TRUNCATE video_creator_runs, video_creator_schedule RESTART IDENTITY CASCADE");
+        // Recreate the old singleton constraint and non-cascading update FK.
+        await pool.query(`ALTER TABLE video_creator_schedule DROP CONSTRAINT video_creator_schedule_slot_check;
+          ALTER TABLE video_creator_schedule ADD CONSTRAINT video_creator_schedule_id_check CHECK (id = 1);
+          ALTER TABLE video_creator_schedule_jobs
+            DROP CONSTRAINT video_creator_schedule_jobs_schedule_id_fkey,
+            ADD CONSTRAINT video_creator_schedule_jobs_schedule_id_fkey
+              FOREIGN KEY (schedule_id) REFERENCES video_creator_schedule(id) ON DELETE CASCADE`);
+        await pool.query(`INSERT INTO video_creator_schedule
+          (id, enabled, mode, starts_at, interval_hours, videos_per_run, revision, last_scheduled_at,
+            last_run_date, last_run_id, last_error, publish_to_youtube, youtube_made_for_kids, youtube_contains_synthetic_media)
+          VALUES (1, TRUE, $1, $2, 5, $3, 7, $2, '2026-09-12', 1, 'existing error', TRUE, FALSE, TRUE)`,
+        [mode, start, mode === "daily" ? 1 : 4]);
+        await pool.query(`INSERT INTO video_creator_schedule_jobs (schedule_id, schedule_revision, scheduled_for, position, settings)
+          VALUES (1, 7, $1, 1, '{"forceRecreate":true}'), (1, 7, $1, 2, '{"forceRecreate":false}')`, [start]);
+        await pool.query(`INSERT INTO video_creator_runs (action, status, log_path, schedule_job_id)
+          VALUES ('create_next', 'success', '/logs/migrated.log', 1)`);
+        const before = (await pool.query("SELECT * FROM video_creator_schedule")).rows[0];
+        const beforeJobs = await jobs();
+        const beforeRuns = await runs();
+        if (method === "runtime") {
+          await newDb().ensureVideoCreatorSchema();
+          await newDb().ensureVideoCreatorSchema();
+        } else {
+          const migration = fs.readFileSync("db/005_independent_schedules.sql", "utf8");
+          await Promise.all([pool.query(migration), pool.query(migration)]);
+        }
+        const id = mode === "daily" ? 1 : 2;
+        assert.deepEqual((await pool.query("SELECT * FROM video_creator_schedule")).rows, [{ ...before, id }]);
+        assert.deepEqual(await jobs(), beforeJobs.map((job) => ({ ...job, schedule_id: id })));
+        assert.deepEqual(await runs(), beforeRuns);
+        assert.equal((await service.getPipelineSchedule(mode)).pendingVideos, 1);
+        await assert.rejects(service.getPipelineSchedule(mode === "daily" ? "interval" : "daily"), /not configured/);
+        await assert.rejects(pool.query("INSERT INTO video_creator_schedule (id, mode) VALUES ($1, $2)",
+          [id === 1 ? 2 : 1, mode]), (error) => error.code === "23514");
+      });
+    }
+  }
+
+  await t.test("both schedules queue when busy and drain once across concurrent ticks/restarts", async () => {
+    await reset();
+    await service.updatePipelineSchedule(dailyInput);
+    await pipeline.startGeneration({});
+    await Promise.all(Array.from({ length: 5 }, () => scheduler().tickSchedule(start)));
+    const queued = await jobs();
+    assert.equal(queued.filter((job) => job.schedule_id === 1).length, 1);
+    assert.equal(queued.filter((job) => job.schedule_id === 2).length, 4);
+    assert.equal((await runs()).length, 1, "manual worker retains its slot");
+    assert.equal((await service.getPipelineSchedule("daily")).pendingVideos, 1);
+    assert.equal((await service.getPipelineSchedule("interval")).pendingVideos, 4);
+    assert.equal(queued.find((job) => job.schedule_id === 1).settings.forceRecreate, true);
+    assert.equal(queued.find((job) => job.schedule_id === 2).settings.forceRecreate, false);
+    await finish();
+    for (let i = 0; i < 5; i++) {
+      await Promise.all(Array.from({ length: 3 }, () => scheduler().tickSchedule(start)));
+      assert.equal((await runs()).length, i + 2);
+      await finish();
+    }
+    await service.tickSchedule(start);
+    const consumed = (await runs()).slice(1).map((run) => Number(run.schedule_job_id));
+    assert.deepEqual(consumed, queued.map((job) => Number(job.id)), "oldest queued job wins regardless of slot");
+    assert.equal((await service.getPipelineSchedule("daily")).pendingVideos, 0);
+    assert.equal((await service.getPipelineSchedule("interval")).pendingVideos, 0);
+    await service.tickSchedule(new Date("2026-09-12T13:00:00Z"));
+    assert.equal((await jobs()).filter((job) => job.schedule_id === 1).length, 1, "daily does not repeat with interval");
+    assert.equal((await jobs()).filter((job) => job.schedule_id === 2).length, 8);
+    await finish();
+    await service.tickSchedule(new Date("2026-09-13T08:00:00Z"));
+    assert.equal((await jobs()).filter((job) => job.schedule_id === 1).length, 2, "daily queues again despite interval backlog");
+    assert.deepEqual(errors, []);
+  });
+
+  for (const mode of ["daily", "interval"]) {
+    await t.test(`edit/disable/delete ${mode} leaves other schedule and its queue unchanged`, async () => {
+      await reset();
+      await service.updatePipelineSchedule(dailyInput);
+      await pipeline.startGeneration({});
+      await service.tickSchedule(start);
+      const other = mode === "daily" ? "interval" : "daily";
+      const otherBefore = await service.getPipelineSchedule(other);
+      const otherJobs = (await jobs()).filter((job) => job.schedule_id === otherBefore.id);
+      const target = mode === "daily" ? dailyInput : input;
+      for (const enabled of [true, false]) {
+        await service.updatePipelineSchedule({ ...target, enabled, forceRecreate: !target.forceRecreate });
+        assert.deepEqual(await service.getPipelineSchedule(other), otherBefore);
+        assert.deepEqual((await jobs()).filter((job) => job.schedule_id === otherBefore.id), otherJobs);
+        assert.equal((await service.getPipelineSchedule(mode)).pendingVideos, 0);
+      }
+      await service.deletePipelineSchedule(mode);
+      await assert.rejects(service.getPipelineSchedule(mode), /not configured/);
+      assert.deepEqual(await service.getPipelineSchedule(other), otherBefore);
+      assert.deepEqual(await jobs(), otherJobs);
+      await finish();
+      await service.tickSchedule(start);
+      assert.ok((await runs()).at(-1).schedule_job_id, "remaining schedule still dispatches");
+      assert.deepEqual(errors, []);
+    });
+  }
+
+  await t.test("failed generation only cancels owning batch with same revision and due time", async () => {
+    // Make interval oldest at the exact same occurrence timestamp as daily.
+    await reset();
+    await pipeline.startGeneration({});
+    await service.tickSchedule(start);
+    await service.updatePipelineSchedule(dailyInput);
+    await service.tickSchedule(start);
+    await finish();
+    await service.tickSchedule(start);
+    const first = (await runs()).at(-1);
+    assert.equal((await jobs()).find((job) => job.id === first.schedule_job_id).schedule_id, 2);
+    await finish(1);
+    await service.tickSchedule(start);
+    assert.equal((await jobs()).filter((job) => job.schedule_id === 2 && job.cancelled).length, 3);
+    assert.equal((await jobs()).filter((job) => job.schedule_id === 1 && job.cancelled).length, 0);
+    assert.match((await service.getPipelineSchedule("interval")).lastError, /remaining videos/);
+    assert.equal((await service.getPipelineSchedule("daily")).lastError, null);
+    const last = (await runs()).at(-1);
+    assert.equal((await jobs()).find((job) => job.id === last.schedule_job_id).schedule_id, 1);
+    assert.deepEqual(errors, []);
+  });
+
+  await t.test("invalid settings in daily do not prevent interval dispatch", async () => {
+    await reset();
+    await service.updatePipelineSchedule(dailyInput);
+    await pool.query("UPDATE video_creator_schedule SET timezone = 'Invalid/Timezone' WHERE id = 1");
+    await service.tickSchedule(start);
+    assert.equal((await runs()).length, 1);
+    assert.ok((await service.getPipelineSchedule("daily")).lastError);
+    assert.equal((await service.getPipelineSchedule("interval")).lastError, null);
+    assert.equal((await jobs()).length, 4);
+    assert.deepEqual(errors, []);
+  });
+
   await t.test("timezone conversion, DST gap validation and legacy daily defaults", async () => {
     const saved = await reset();
     assert.equal(saved.startsAt, input.startsAt);
     assert.equal(saved.startsAtUtc, start.toISOString());
-    await assert.rejects(service.updateDailySchedule({ ...input, timezone: "America/New_York", startsAt: "2026-03-08T02:30:00" }), /does not exist/);
-    const ambiguous = await service.updateDailySchedule({ ...input, timezone: "America/New_York", startsAt: "2026-11-01T01:30:00" });
+    await assert.rejects(service.updatePipelineSchedule({ ...input, timezone: "America/New_York", startsAt: "2026-03-08T02:30:00" }), /does not exist/);
+    const ambiguous = await service.updatePipelineSchedule({ ...input, timezone: "America/New_York", startsAt: "2026-11-01T01:30:00" });
     assert.equal(ambiguous.startsAtUtc, "2026-11-01T06:30:00.000Z");
     await reset({ mode: "daily" });
     await service.tickSchedule(new Date("2026-09-12T01:59:59Z"));
@@ -132,7 +270,7 @@ test("PostgreSQL schedule queue integration", { skip: !process.env.SCHEDULE_TEST
     assert.deepEqual(errors, []);
     assert.equal((await jobs()).length, 4);
     assert.equal((await runs()).length, 1);
-    assert.equal((await service.getDailySchedule()).pendingVideos, 3);
+    assert.equal((await service.getPipelineSchedule("interval")).pendingVideos, 3);
     for (let i = 1; i <= 4; i++) {
       await service.tickSchedule(start); // active run cannot consume another job
       assert.equal((await runs()).length, i);
@@ -164,11 +302,17 @@ test("PostgreSQL schedule queue integration", { skip: !process.env.SCHEDULE_TEST
     await reset();
     await pipeline.startGeneration({});
     await service.tickSchedule(start);
-    assert.equal((await jobs()).length, 0);
+    assert.equal((await jobs()).length, 4, "batch queues even while manual worker is busy");
     await finish();
-    await service.tickSchedule(new Date("2026-09-14T10:32:00Z"));
-    assert.equal((await jobs()).length, 4);
-    assert.equal((await service.getDailySchedule()).lastRunAt, "2026-09-14T10:00:00.000Z");
+    const later = new Date("2026-09-14T10:32:00Z");
+    // Persisted batch completes before coalescing missed occurrences.
+    for (let i = 0; i < 4; i++) {
+      await service.tickSchedule(later);
+      await finish();
+    }
+    await service.tickSchedule(later);
+    assert.equal((await jobs()).length, 8);
+    assert.equal((await service.getPipelineSchedule("interval")).lastRunAt, "2026-09-14T10:00:00.000Z");
     assert.deepEqual(errors, []);
   });
 
@@ -206,19 +350,19 @@ test("PostgreSQL schedule queue integration", { skip: !process.env.SCHEDULE_TEST
     await reset();
     await service.tickSchedule(start);
     const queued = (await jobs())[1];
-    await service.updateDailySchedule({ ...input, enabled: false });
-    assert.equal((await service.getDailySchedule()).pendingVideos, 0);
+    await service.updatePipelineSchedule({ ...input, enabled: false });
+    assert.equal((await service.getPipelineSchedule("interval")).pendingVideos, 0);
     await finish();
     await assert.rejects(pipeline.startGeneration({ scheduleJobId: queued.id }), /no longer pending/);
     await service.tickSchedule(start);
     assert.equal((await runs()).length, 1);
-    await service.updateDailySchedule(input);
+    await service.updatePipelineSchedule(input);
     await service.tickSchedule(start);
     assert.equal((await runs()).length, 1, "same cadence must not replay claimed occurrence");
-    await service.updateDailySchedule({ ...input, startsAt: "2026-09-12T16:00:00" });
+    await service.updatePipelineSchedule({ ...input, startsAt: "2026-09-12T16:00:00" });
     await service.tickSchedule(new Date("2026-09-12T09:00:00Z"));
     assert.equal((await runs()).length, 2);
-    await service.deleteDailySchedule();
+    await service.deletePipelineSchedule("interval");
     assert.equal((await jobs()).length, 0);
     await finish();
     assert.equal((await runs()).length, 2, "history remains after deleting schedule");
@@ -232,7 +376,7 @@ test("PostgreSQL schedule queue integration", { skip: !process.env.SCHEDULE_TEST
     await service.tickSchedule(start);
     assert.equal((await jobs()).filter((job) => job.cancelled).length, 3);
     assert.equal((await runs()).length, 1);
-    assert.match((await service.getDailySchedule()).lastError, /remaining videos/);
+    assert.match((await service.getPipelineSchedule("interval")).lastError, /remaining videos/);
     await service.tickSchedule(new Date("2026-09-12T13:00:00Z"));
     assert.equal((await runs()).length, 2);
     assert.equal((await jobs()).length, 8);
@@ -248,7 +392,7 @@ test("PostgreSQL schedule queue integration", { skip: !process.env.SCHEDULE_TEST
     assert.equal((await runs())[0].status, "failed");
     assert.equal((await runs())[0].after_run_pending, false);
     assert.equal((await jobs()).filter((job) => job.cancelled).length, 3);
-    assert.equal((await service.getDailySchedule()).pendingVideos, 0);
+    assert.equal((await service.getPipelineSchedule("interval")).pendingVideos, 0);
     assert.deepEqual(errors, []);
   });
 
@@ -257,7 +401,7 @@ test("PostgreSQL schedule queue integration", { skip: !process.env.SCHEDULE_TEST
     configured = false;
     await service.tickSchedule(start);
     assert.equal((await jobs()).filter((job) => job.cancelled).length, 4);
-    assert.match((await service.getDailySchedule()).lastError, /OAuth/);
+    assert.match((await service.getPipelineSchedule("interval")).lastError, /OAuth/);
     await service.tickSchedule(start);
     assert.equal((await jobs()).length, 4);
     assert.equal((await runs()).length, 0);

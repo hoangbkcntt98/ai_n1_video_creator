@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import styles from "@/app/page.module.css";
-import type { DailySchedule as Schedule } from "@/lib/scheduler";
+import type { PipelineSchedule as Schedule } from "@/lib/scheduler";
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
 const timezoneOptions = [
@@ -16,10 +16,11 @@ const timezoneOptions = [
   "America/Los_Angeles",
 ];
 
-export default function DailyScheduleSettings() {
+export default function PipelineScheduleSettings({ mode }: { mode: Schedule["mode"] }) {
+  const title = mode === "daily" ? "Daily Schedule" : "Repeat every N hours";
+  const endpoint = `${basePath}/api/schedule?mode=${mode}`;
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [runTime, setRunTime] = useState("09:00");
-  const [mode, setMode] = useState<Schedule["mode"]>("daily");
   const [startsAt, setStartsAt] = useState("");
   const [intervalHours, setIntervalHours] = useState("5");
   const [videosPerRun, setVideosPerRun] = useState("4");
@@ -38,18 +39,17 @@ export default function DailyScheduleSettings() {
   useEffect(() => {
     const browserTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     let disposed = false;
-    const readSchedule = () => fetch(`${basePath}/api/schedule`, { cache: "no-store" })
+    const readSchedule = () => fetch(endpoint, { cache: "no-store" })
       .then(async (response) => {
         const body = await response.json() as { schedule?: Schedule; error?: string };
         if (response.status === 404) return null;
-        if (!response.ok || !body.schedule) throw new Error(body.error || "Could not read daily schedule.");
+        if (!response.ok || !body.schedule) throw new Error(body.error || "Could not read schedule.");
         return body.schedule;
       });
     readSchedule().then((value) => {
         if (!value || disposed) return;
         setSchedule(value);
         setRunTime(value.runTime);
-        setMode(value.mode ?? "daily");
         setStartsAt(value.startsAt ?? "");
         setIntervalHours(String(value.intervalHours ?? 5));
         setVideosPerRun(String(value.mode === "interval" ? value.videosPerRun : 4));
@@ -63,14 +63,14 @@ export default function DailyScheduleSettings() {
         setYoutubeSynthetic(typeof value.youtubeContainsSyntheticMedia === "boolean" ? value.youtubeContainsSyntheticMedia ? "yes" : "no" : "");
       })
       .catch((reason) => {
-        if (!disposed) setError(reason instanceof Error ? reason.message : "Could not read daily schedule.");
+        if (!disposed) setError(reason instanceof Error ? reason.message : "Could not read schedule.");
       });
     // Refresh queue/next-run status without overwriting fields being edited.
     const timer = setInterval(() => {
       void readSchedule().then((value) => { if (!disposed) setSchedule(value); }).catch(() => {});
     }, 15_000);
     return () => { disposed = true; clearInterval(timer); };
-  }, []);
+  }, [endpoint]);
 
   async function save() {
     if (mode === "interval" && (!startsAt || !Number.isInteger(Number(intervalHours)) ||
@@ -90,7 +90,7 @@ export default function DailyScheduleSettings() {
     setMessage("");
     setError("");
     try {
-      const response = await fetch(`${basePath}/api/schedule`, {
+      const response = await fetch(endpoint, {
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -101,30 +101,29 @@ export default function DailyScheduleSettings() {
         }),
       });
       const body = await response.json() as { schedule?: Schedule; error?: string };
-      if (!response.ok || !body.schedule) throw new Error(body.error || "Could not save daily schedule.");
+      if (!response.ok || !body.schedule) throw new Error(body.error || "Could not save schedule.");
       setSchedule(body.schedule);
-      setMessage(!enabled ? "Pipeline schedule disabled." : body.schedule.mode === "interval"
+      setMessage(!enabled ? `${title} disabled.` : mode === "interval"
         ? `Create ${body.schedule.videosPerRun} videos every ${body.schedule.intervalHours} hours from ${body.schedule.startsAt?.replace("T", " ")} (${body.schedule.timezone}).`
         : `Daily pipeline enabled at ${body.schedule.runTime} (${body.schedule.timezone}).`);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not save daily schedule.");
+      setError(reason instanceof Error ? reason.message : "Could not save schedule.");
     } finally {
       setBusy(false);
     }
   }
 
   async function remove() {
-    if (!window.confirm("Delete pipeline schedule and cancel videos still queued? Running videos and their uploads will continue.")) return;
+    if (!window.confirm(`Delete ${title} and cancel its queued videos? The other schedule is unchanged. Running videos and their uploads will continue.`)) return;
     setBusy(true);
     setMessage("");
     setError("");
     try {
-      const response = await fetch(`${basePath}/api/schedule`, { method: "DELETE" });
+      const response = await fetch(endpoint, { method: "DELETE" });
       const body = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(body.error || "Could not delete daily schedule.");
+      if (!response.ok) throw new Error(body.error || "Could not delete schedule.");
       setSchedule(null);
       setEnabled(false);
-      setMode("daily");
       setStartsAt("");
       setIntervalHours("5");
       setVideosPerRun("4");
@@ -133,35 +132,31 @@ export default function DailyScheduleSettings() {
       setYoutubePrivacy("private");
       setYoutubeAudience("");
       setYoutubeSynthetic("");
-      setMessage("Pipeline schedule deleted.");
+      setMessage(`${title} deleted.`);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not delete daily schedule.");
+      setError(reason instanceof Error ? reason.message : "Could not delete schedule.");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <section className={styles.schedulePanel}>
+    <section className={styles.schedulePanel} aria-labelledby={`schedule-heading-${mode}`}>
       <div className={styles.sectionHeading}>
         <div>
           <p className="eyebrow">AUTOMATION</p>
-          <h2>Pipeline Schedule</h2>
+          <h2 id={`schedule-heading-${mode}`}>{title}</h2>
         </div>
         <span className={enabled ? styles.scheduleEnabled : styles.scheduleDisabled}>{enabled ? "Enabled" : "Disabled"}</span>
       </div>
-      <p className={styles.scheduleDescription}>Create videos daily or repeat a batch every N hours from a chosen start time. Videos and their selected uploads run sequentially.</p>
+      <p className={styles.scheduleDescription}>
+        {mode === "daily" ? "Create one video each day at the selected time." : "Repeat a batch every N hours from a chosen start time."}
+        {" "}Both schedules can be enabled independently. Due videos share one worker and run sequentially with their selected uploads.
+      </p>
       <div className={styles.scheduleFields}>
         <label className={styles.scheduleToggle}>
           <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} disabled={busy} />
           Enable schedule
-        </label>
-        <label>
-          Schedule mode
-          <select value={mode} onChange={(event) => setMode(event.target.value as Schedule["mode"])} disabled={busy}>
-            <option value="daily">Daily (1 video)</option>
-            <option value="interval">Repeat every N hours</option>
-          </select>
         </label>
         {mode === "daily" ? <label>
           Time
@@ -182,8 +177,8 @@ export default function DailyScheduleSettings() {
         </>}
         <label>
           Timezone
-          <input list="schedule-timezones" value={timezone} onChange={(event) => setTimezone(event.target.value)} disabled={busy} />
-          <datalist id="schedule-timezones">{timezoneOptions.map((option) => <option value={option} key={option} />)}</datalist>
+          <input list={`schedule-timezones-${mode}`} value={timezone} onChange={(event) => setTimezone(event.target.value)} disabled={busy} />
+          <datalist id={`schedule-timezones-${mode}`}>{timezoneOptions.map((option) => <option value={option} key={option} />)}</datalist>
         </label>
         {mode === "interval" ? <p className={styles.scheduleDescription}>
           Start time uses the timezone above, not the server timezone. For example: 4 videos every 5 hours from 12/09/2026 15:00:00.
@@ -224,7 +219,7 @@ export default function DailyScheduleSettings() {
         </button>
         {schedule ? <button type="button" onClick={() => void remove()} disabled={busy}>Delete Schedule</button> : null}
       </div>
-      <p className={styles.scheduleDescription}>Saving or disabling replaces the schedule and cancels videos not yet started. Running videos and their uploads continue.</p>
+      <p className={styles.scheduleDescription}>Saving or disabling cancels this schedule&apos;s videos not yet started. The other schedule is unchanged. Running videos and their uploads continue.</p>
       {schedule?.nextRunAt ? <p className={styles.scheduleMeta}>Next batch: {new Intl.DateTimeFormat("en-GB", {
         timeZone: schedule.timezone, dateStyle: "short", timeStyle: "medium",
       }).format(new Date(schedule.nextRunAt))} ({schedule.timezone})</p> : null}

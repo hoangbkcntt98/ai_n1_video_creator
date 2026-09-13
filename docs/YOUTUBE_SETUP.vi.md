@@ -86,9 +86,9 @@ token có thể hết hạn, bị thu hồi hoặc không thuộc OAuth client �
 
 Không còn màn YouTube riêng. Đường dẫn `/youtube` cũ chuyển về Dashboard. Trường lịch bên cạnh video chỉ áp dụng cho Facebook, không hẹn giờ công khai video YouTube.
 
-## Tự động upload sau Daily Pipeline Schedule
+## Tự động upload theo lịch tạo video
 
-1. Dashboard → **AUTOMATION → Pipeline Schedule**. Chọn lịch hằng ngày hoặc khoảng giờ theo [hướng dẫn lịch tạo video](PIPELINE_SCHEDULE.vi.md).
+1. Dashboard → **AUTOMATION → Daily Schedule** hoặc **Repeat every N hours** theo [hướng dẫn lịch tạo video](PIPELINE_SCHEDULE.vi.md). Hai khung cấu hình riêng, có thể cùng bật; tùy chọn upload chỉ áp dụng lịch trong khung đang sửa.
 2. Bật **Publish to YouTube after video creation**.
 3. Chọn visibility, audience và khai báo nội dung. Mặc định **Private**; chọn **Public** nếu muốn công khai sau upload. Những khai báo này áp dụng cho mọi video được tạo bởi lịch.
 4. Bấm **Save Schedule** và xác nhận quyền tự động upload. Khi lịch đang bật, server yêu cầu đủ ba biến OAuth trước khi cho lưu.
