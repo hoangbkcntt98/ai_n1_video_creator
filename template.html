@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="vi">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>1Minute Japanese · Kanji Quiz</title>
+    <style>
+        :root {
+            color-scheme: light;
+            font-family: "Noto Sans CJK JP", "Noto Sans JP", "Yu Gothic", "Hiragino Kaku Gothic ProN", Meiryo, "Arial Unicode MS", Arial, sans-serif;
+            color: #172b43;
+            background: #e8edf3
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        body {
+            margin: 0
+        }
+
+        .stage {
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            padding: 24px
+        }
+
+        /* cqw của các phần tử con luôn dựa trên chiều rộng reel. */
+        .reel {
+            container-type: inline-size;
+            position: relative;
+            width: min(540px, calc(100vw - 48px));
+            aspect-ratio: 9/16;
+            overflow: hidden;
+            background: #fbfdff;
+            box-shadow: 0 20px 70px #21395420
+        }
+
+        .reel::before {
+            content: "";
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(ellipse at 100% 0%, #dcefff 0, transparent 42%);
+            pointer-events: none
+        }
+
+        .header {
+            position: absolute;
+            top: 6%;
+            left: 8%;
+            right: 8%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 3cqw
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 2cqw;
+            font-size: 2.7cqw;
+            font-weight: 800;
+            letter-spacing: -.04em
+        }
+
+        .brand-icon {
+            width: 8cqw;
+            height: 8cqw;
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            background: #258be0;
+            color: #fff;
+            overflow: hidden;
+            font-size: 4cqw
+        }
+
+        .brand-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover
+        }
+
+        .brand-icon:has(img:not([hidden])) .brand-fallback {
+            display: none
+        }
+
+        .pill {
+            padding: 1.6cqw 2.4cqw;
+            border: 1px solid #cfe2f3;
+            border-radius: 8cqw;
+            font-size: 2cqw;
+            font-weight: 700;
+            color: #337caf;
+            letter-spacing: .1em;
+            white-space: nowrap
+        }
+
+        .question {
+            position: absolute;
+            top: 16%;
+            left: 8%;
+            right: 8%;
+            height: 16%;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 3cqw
+        }
+
+        .eyebrow {
+            margin: 0;
+            font-size: 2.5cqw;
+            font-weight: 700;
+            letter-spacing: .22em;
+            color: #65829c
+        }
+
+        .title {
+            margin: 0;
+            width: 100%;
+            font-size: 17cqw;
+            font-weight: 900;
+            line-height: 1.2;
+            letter-spacing: -.025em;
+            color: #258be0;
+            white-space: nowrap
+        }
+
+        .prompt {
+            margin: 0;
+            font-size: 2.9cqw;
+            color: #637b91
+        }
+
+        .answers {
+            position: absolute;
+            top: 36%;
+            left: 8%;
+            right: 8%;
+            height: 34%;
+            display: grid;
+            grid-template-rows: repeat(4, minmax(0, 1fr));
+            gap: 2.5cqw
+        }
+
+        .answer {
+            min-height: 0;
+            display: grid;
+            grid-template-columns: 8.5cqw 5cqw minmax(0, 1fr);
+            align-items: center;
+            gap: 2.4cqw;
+            padding: 1.5cqw 3cqw;
+            border: .25cqw solid #d8e5ef;
+            border-radius: 3.5cqw;
+            background: #fff;
+            box-shadow: 0 1cqw 2cqw #254e7510
+        }
+
+        .icon-circle {
+            width: 8.5cqw;
+            height: 8.5cqw;
+            border-radius: 2.8cqw;
+            display: grid;
+            place-items: center;
+            background: #eaf5ff;
+            font-size: 4.8cqw
+        }
+
+        .answer:nth-child(2) .icon-circle {
+            background: #fff0f3
+        }
+
+        .answer:nth-child(3) .icon-circle {
+            background: #fff7dc
+        }
+
+        .answer:nth-child(4) .icon-circle {
+            background: #eff0ff
+        }
+
+        .letter {
+            font-size: 3.3cqw;
+            font-weight: 800;
+            color: #8295a8
+        }
+
+        .answer-text {
+            font-size: 5.2cqw;
+            font-weight: 700;
+            line-height: 1.25;
+            min-width: 0;
+            max-height: 100%;
+            overflow-wrap: anywhere
+        }
+
+        .bottom {
+            position: absolute;
+            left: 8%;
+            right: 8%;
+            top: 75%;
+            height: 16%;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 4cqw
+        }
+
+        .person-wrap {
+            width: 31cqw;
+            height: 28cqw;
+            display: grid;
+            place-items: center
+        }
+
+        .person-wrap img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain
+        }
+
+        .person-wrap:has(img:not([hidden])) .mascot-fallback {
+            display: none
+        }
+
+        .mascot-fallback {
+            display: grid;
+            place-items: center;
+            width: 23cqw;
+            height: 23cqw;
+            border-radius: 7cqw;
+            background: #e7f3ff;
+            color: #258be0;
+            transform: rotate(-7deg);
+            font-size: 12cqw;
+            font-weight: 800;
+            border: .3cqw solid #cde6fb;
+            box-shadow: 1.5cqw 1.5cqw 0 #d7eafa
+        }
+
+        .mascot-fallback span {
+            transform: rotate(7deg)
+        }
+
+        .timer-block {
+            display: flex;
+            align-items: center;
+            gap: 3cqw
+        }
+
+        .timer-caption {
+            font-size: 2.8cqw;
+            line-height: 1.6;
+            color: #71889c
+        }
+
+        .timer-caption strong {
+            display: block;
+            color: #243e56;
+            font-size: 3.2cqw
+        }
+
+        .timer {
+            position: relative;
+            width: 24cqw;
+            height: 24cqw;
+            display: grid;
+            place-items: center
+        }
+
+        .timer svg {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            transform: rotate(-90deg)
+        }
+
+        .track,
+        .progress {
+            fill: none;
+            stroke-width: 5
+        }
+
+        .track {
+            stroke: #e2ecf4
+        }
+
+        .progress {
+            stroke: #258be0;
+            stroke-linecap: round;
+            stroke-dasharray: 289.027;
+            stroke-dashoffset: 0
+        }
+
+        .timer-label {
+            text-align: center
+        }
+
+        .seconds {
+            display: block;
+            font-size: 7cqw;
+            font-weight: 800;
+            line-height: 1.1
+        }
+
+        .unit {
+            display: block;
+            margin-top: 1cqw;
+            font-size: 1.8cqw;
+            letter-spacing: .13em;
+            color: #71889c;
+            font-weight: 700
+        }
+
+        .hint {
+            position: absolute;
+            bottom: 3.7%;
+            left: 8%;
+            right: 8%;
+            margin: 0;
+            padding-top: 2.5cqw;
+            border-top: 1px solid #e0eaf2;
+            text-align: center;
+            font-size: 1.8cqw;
+            color: #92a4b4
+        }
+
+        /* Export lấy canvas thật 1080×1920, không dùng khung preview 540px. */
+        html.export .stage {
+            padding: 0;
+            min-height: 0;
+            display: block
+        }
+
+        html.export .reel {
+            width: 1080px;
+            height: 1920px;
+            box-shadow: none
+        }
+    </style>
+    <script>if (new URLSearchParams(location.search).has('export')) document.documentElement.classList.add('export');</script>
+</head>
+
+<body>
+    <main class="stage">
+        <section class="reel" id="reel">
+            <header class="header">
+                <div class="brand">
+                    <div class="brand-icon"><img src="logo.jpg" alt="" onerror="this.hidden=true"><span
+                            class="brand-fallback">日</span></div><span>1Minute Japanese</span>
+                </div><span class="pill">KANJI QUIZ</span>
+            </header>
+            <div class="question">
+                <p class="eyebrow">「JPLTN1・漢字」</p>
+                <h1 class="title" data-fit>遭う</h1>
+                <p class="prompt">読み方は？</p>
+            </div>
+            <div class="answers">
+                <div class="answer"><span class="icon-circle">👍</span><span class="letter">A.</span><span
+                        class="answer-text" data-fit>あう</span></div>
+                <div class="answer"><span class="icon-circle">❤️</span><span class="letter">B.</span><span
+                        class="answer-text" data-fit>そうう</span></div>
+                <div class="answer"><span class="icon-circle">😆</span><span class="letter">C.</span><span
+                        class="answer-text" data-fit>あえる</span></div>
+                <div class="answer"><span class="icon-circle">😮</span><span class="letter">D.</span><span
+                        class="answer-text" data-fit>かう</span></div>
+            </div>
+            <div class="bottom">
+                <div class="person-wrap"><img src="spinning-bear.gif" alt="" onerror="this.hidden=true">
+                    <div class="mascot-fallback"><span>あ</span></div>
+                </div>
+                <div class="timer-block">
+                    <div class="timer-caption"><strong>考え中....</strong>答えてみてね!</div>
+                    <div class="timer"><svg viewBox="0 0 100 100" aria-hidden="true">
+                            <circle class="track" cx="50" cy="50" r="46" />
+                            <circle class="progress" cx="50" cy="50" r="46" />
+                        </svg>
+                        <div class="timer-label"><span class="seconds">5</span><span class="unit">SECONDS</span></div>
+                    </div>
+                </div>
+            </div>
+            <p class="hint">© 2026 1Minute Japanese</p>
+        </section>
+    </main>
+    <script>
+        // Có thể thay nội dung trực tiếp trong HTML hoặc gọi setQuiz từ Puppeteer.
+        window.fitText = function () {
+            document.querySelectorAll('[data-fit]').forEach(el => {
+                el.style.fontSize = '';
+                let size = parseFloat(getComputedStyle(el).fontSize);
+                const limit = el.classList.contains('title') ? el.parentElement.clientHeight * .62 : el.closest('.answer').clientHeight * .72;
+                while (size > 10 && (el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > limit + 1)) {
+                    size -= .5; el.style.fontSize = size + 'px';
+                }
+            });
+        };
+        window.setQuiz = function (data) {
+            if (data.Word != null) document.querySelector('.title').textContent = data.Word;
+            ['AnswerA', 'AnswerB', 'AnswerC', 'AnswerD'].forEach((key, i) => { if (data[key] != null) document.querySelectorAll('.answer-text')[i].textContent = data[key] });
+            window.fitText();
+        };
+        window.renderFrame = function (time = 0, duration = 5) {
+            const remaining = Math.max(0, duration - time);
+            document.querySelector('.seconds').textContent = Math.ceil(remaining);
+            document.querySelector('.progress').style.strokeDashoffset = 289.027 * (1 - remaining / duration);
+        };
+        document.fonts.ready.then(window.fitText);
+        new ResizeObserver(window.fitText).observe(document.querySelector('#reel'));
+    </script>
+</body>
+
+</html>

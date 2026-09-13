@@ -66,6 +66,26 @@ export async function listVideos(): Promise<VideoRecord[]> {
   return records.sort((a, b) => b.modifiedAt.localeCompare(a.modifiedAt)).slice(0, 80);
 }
 
+// Exact-path lookup also covers older Kanji videos outside listVideos' 80-item limit.
+export async function getVideoDetails(relativePath: string): Promise<VideoRecord | null> {
+  const filePath = resolvedOutputPath(relativePath);
+  if (!filePath.toLowerCase().endsWith(".mp4")) return null;
+  const stat = await fs.stat(filePath).catch(() => null);
+  if (!stat?.isFile()) return null;
+  await ensureVideoCreatorSchema();
+  const row = (await query<StoredVideo>(`SELECT relative_path, title, caption, facebook_video_id,
+    scheduled_publish_at, published_at, youtube_video_id, youtube_uploaded_at, youtube_privacy
+    FROM video_creator_videos WHERE relative_path = $1`, [relativePath])).rows[0];
+  return {
+    relativePath, title: row?.title || path.basename(filePath, ".mp4"), caption: row?.caption || "",
+    size: stat.size, modifiedAt: stat.mtime.toISOString(),
+    facebookVideoId: row?.facebook_video_id || null,
+    scheduledPublishAt: row?.scheduled_publish_at || null, publishedAt: row?.published_at || null,
+    youtubeVideoId: row?.youtube_video_id || null, youtubeUploadedAt: row?.youtube_uploaded_at || null,
+    youtubePrivacy: row?.youtube_privacy || null,
+  };
+}
+
 export async function saveVideoDetails(relativePath: string, input: { title?: string; caption?: string }) {
   resolvedOutputPath(relativePath);
   await ensureVideoCreatorSchema();

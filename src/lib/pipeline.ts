@@ -4,6 +4,7 @@ import path from "node:path";
 import { appConfig, resolvedOutputPath, toRelativeOutputPath } from "@/lib/config";
 import { ensureVideoCreatorSchema, processAlive, query } from "@/lib/db";
 import { markFacebookPublished, markFacebookScheduled, markYouTubeUploaded, saveVideoDetails } from "@/lib/video";
+import { markWordCreatorStatus } from "@/lib/wordCreator";
 import { validateYouTubePublishSettings, validateYouTubeUpload, youtubeConfiguration, type YouTubeUploadInput, type YouTubePublishSettings } from "@/lib/youtube";
 
 type AfterRunPublish = {
@@ -11,9 +12,11 @@ type AfterRunPublish = {
   youtube?: YouTubePublishSettings;
   outputVideo?: string;
   sourceRunId?: number;
+  title?: string;
+  caption?: string;
 };
 
-type RunAction = "create_next" | "generate_pattern" | "publish" | "youtube_publish";
+type RunAction = "create_next" | "generate_pattern" | "publish" | "youtube_publish" | "create_kanji";
 export type Run = {
   id: number; action: RunAction; pattern_id: number | null; pattern_name: string | null;
   status: "running" | "success" | "failed"; log_path: string; error: string | null;
@@ -102,12 +105,12 @@ async function performPublishAfterRun(run: Pick<Run, "id" | "log_path" | "action
     if (!video) throw new Error("Video created, but output video path is missing.");
     const patternName = path.basename(video).replace(/_video\.mp4$/i, "");
     const captionPath = path.join(appConfig.dataDir(), path.dirname(video), `${patternName}_reel_caption.txt`);
-    const caption = await fs.readFile(captionPath, "utf8").catch(() => "");
-    const title = patternName.replaceAll("_", " ").trim();
+    const caption = plan.caption ?? await fs.readFile(captionPath, "utf8").catch(() => "");
+    const title = plan.title ?? patternName.replaceAll("_", " ").trim();
     if (plan.facebook) {
       try {
         const upload = await startFacebookPublish(video, caption, { title }, {
-          youtube: plan.youtube, outputVideo: video, sourceRunId,
+          youtube: plan.youtube, outputVideo: video, sourceRunId, title, caption,
         });
         await fs.appendFile(run.log_path, `\nAutomatic Facebook upload: run #${upload.id}.\n`).catch(() => {});
         return; // YouTube starts only after the Facebook worker finishes.
@@ -299,6 +302,54 @@ export async function startGeneration(input: {
   return run;
 }
 
+export async function startKanjiGeneration(input: {
+  forceRecreate?: boolean;
+  publishToFacebook?: boolean;
+  youtube?: YouTubePublishSettings;
+  scheduleJobId: number;
+  kanjiOptions?: { source?: string; durationSeconds: number; fps: number; autoFps: boolean };
+}) {
+  const { enqueueWordCreator, getWordCreatorJob } = await import("@/lib/wordCreatorJobs");
+  const active = await getWordCreatorJob();
+  if (active && (active.status === "running" || active.status === "queued")) {
+    throw Object.assign(new Error("Kanji worker is busy."), { code: "23505" });
+  }
+  const youtube = input.youtube ? validateYouTubePublishSettings(input.youtube) : undefined;
+  if (youtube && !youtubeConfiguration().configured) throw new Error("Configure YouTube OAuth credentials in .env.local first.");
+  const run = await createRun("create_kanji", undefined, input.kanjiOptions?.source,
+    input.publishToFacebook || youtube ? { facebook: input.publishToFacebook, youtube } : undefined, input.scheduleJobId);
+  try {
+    // A scheduled Kanji uses the same durable worker/logs as a manual render.
+    // Its run occupies the shared schedule/upload slot until completion.
+    await query("UPDATE video_creator_runs SET runner_pid = $2 WHERE id = $1", [run.id, process.pid]);
+    await fs.appendFile(run.log_path, "Scheduled Kanji generation queued.\n");
+    await enqueueWordCreator({ ...input.kanjiOptions, limit: 1, scheduled: true,
+      forceRecreate: input.forceRecreate, pipelineRunId: run.id }, false);
+  } catch (error) {
+    await finishRun(run.id, "failed", error instanceof Error ? error.message : "Could not enqueue Kanji.");
+    await publishAfterRun(run);
+    throw error;
+  }
+  return run;
+}
+
+export async function finishKanjiGeneration(runId: number, result?: {
+  videoPath: string; source: string; requiredVocabulary: string;
+}, error?: string) {
+  const run = (await query<Run>("SELECT * FROM video_creator_runs WHERE id = $1 AND action = 'create_kanji'", [runId])).rows[0];
+  if (!run || run.status !== "running") return;
+  if (result && !error) {
+    await markWordCreatorStatus(result.source, result.requiredVocabulary, "video_generated").catch(() => {});
+    await query(`UPDATE video_creator_runs SET after_run_publish = after_run_publish || $2::jsonb
+      WHERE id = $1 AND after_run_publish IS NOT NULL`, [runId, JSON.stringify({
+      title: `${result.source} ${result.requiredVocabulary}`, caption: `WordCreator: ${result.requiredVocabulary}`,
+    })]);
+    await fs.appendFile(run.log_path, `\nVideo ready: ${result.videoPath}\n`);
+  }
+  await finishRun(runId, error || !result ? "failed" : "success", error || (!result ? "No Kanji video created." : undefined), result?.videoPath);
+  await publishAfterRun(run, result?.videoPath);
+}
+
 const MIN_SCHEDULE_LEAD_MS = 10 * 60 * 1000;
 const MAX_SCHEDULE_LEAD_MS = 29 * 24 * 60 * 60 * 1000;
 
@@ -365,7 +416,8 @@ const resumedRuns = new Set<number>();
 async function finalizeResumedRun(run: Pick<Run, "id" | "log_path" | "action">) {
   const output = await fs.readFile(run.log_path, "utf8").catch(() => "");
   const outputVideo = parseOutputVideo(output);
-  const succeeded = /PIPELINE COMPLETED SUCCESSFULLY|^\s*\{\s*"success"\s*:\s*true\b/m.test(output);
+  const succeeded = run.action !== "create_kanji" &&
+    /PIPELINE COMPLETED SUCCESSFULLY|^\s*\{\s*"success"\s*:\s*true\b/m.test(output);
   if (succeeded) {
     if (run.action === "youtube_publish") {
       if (!outputVideo) throw new Error("YouTube upload log has no video path.");

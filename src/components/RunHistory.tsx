@@ -12,6 +12,7 @@ type LogState = { text: string; error?: string; loading: boolean };
 
 function formatRunName(run: Run) {
   if (run.action === "youtube_publish") return "YouTube upload";
+  if (run.action === "create_kanji") return run.pattern_name ? `Kanji · ${run.pattern_name}` : "Kanji video";
   return run.pattern_name ? `${run.pattern_name} (#${run.pattern_id})` : run.action === "publish" ? "Facebook upload" : "Pipeline next pattern";
 }
 

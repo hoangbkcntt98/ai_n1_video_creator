@@ -261,3 +261,34 @@ Mở **Video Studio** tại `/video-creator/studio` để:
 
 
 Library lưu lại ảnh/audio đã dùng và các video đã tạo để xem lại.
+
+## WordCreator: tạo video nền
+
+- Dashboard tách **Grammar/Kanji**, mỗi loại có **Daily Schedule** và **Repeat every N hours** riêng. Kanji có thời lượng, FPS (mặc định 25), tự khớp GIF, source tùy chọn và tự đăng Facebook/YouTube. Giữ nguyên lịch Grammar; Kanji không tự bật. Schema tự cập nhật hoặc dùng `db/012_kanji_schedules.sql`. Chi tiết trong `docs/PIPELINE_SCHEDULE.vi.md`.
+
+- Tìm và chọn Kanji từ DB Anki (`AIKanjiWithImage`), có phân trang. Bỏ chọn để lấy tự động theo số record.
+- Log AI, HTML, render frame/MP4, lưu DB và lỗi được lưu trong `word_creator_job_logs`; giao diện hiển thị 200 dòng mới nhất, cập nhật mỗi 2 giây. Bảng tự tạo hoặc áp dụng `db/010_word_creator_logs.sql` sau `008`.
+- Card video có **Upload / Lên lịch**: chỉnh title/caption, đăng Facebook ngay hoặc đặt lịch từ 10 phút đến 29 ngày, dùng chung luồng Grammar. Có xác nhận trước khi gửi, trạng thái và log upload; nhận HTTP 202 chưa có nghĩa Facebook đã lên lịch thành công.
+- Card Kanji có trình phát video và nút mở video. Video chỉ tải khi bấm phát, tránh tải hàng loạt.
+- Chọn **FPS** khi tạo: số nguyên **1–60**, mặc định **25**. **Tự động khớp FPS theo GIF** bật mặc định: FFprobe đọc thời lượng từng frame GIF; renderer chọn FPS nguyên tương thích, ưu tiên không thấp hơn số đã nhập và giới hạn 60. GIF 80 ms dùng 25/50 FPS; không có GIF giữ số đã nhập. Nếu không thể khớp chính xác trong giới hạn 60, log cảnh báo và lấy mẫu ở 60 FPS. Tắt tự động để giữ FPS cố định.
+- Renderer dùng cách trong `refer`: chụp HTML theo đồng hồ frame, tách GIF khỏi ảnh rồi ghép GIF gốc bằng FFmpeg. Hỗ trợ nhiều ảnh GIF cục bộ / data URL base64 trong `#reel`; GIF cần bố cục cố định, không bị phần tử khác che. GIF từ URL ngoài phải tải về cạnh template trước. Thư mục frame tạm được xóa cả khi thành công lẫn khi lỗi.
+- FPS thực tế được lưu cùng câu hỏi và hiển thị trên card; video cũ không đổi. `db/011_word_creator_fps_default.sql` đổi default DB cho bản ghi mới thành 25 sau migration `009`.
+- `POST /video-creator/api/word-creator` trả **202 JSON** với `{ job }` ngay sau khi lưu tác vụ, không chờ AI/Chromium/FFmpeg hoàn thành.
+- `GET /video-creator/api/word-creator?jobId=<id>` trả trạng thái và tiến độ. Giao diện kiểm tra mỗi 2 giây; tải lại trang vẫn thấy tác vụ gần nhất.
+- Bảng `word_creator_jobs` tự tạo khi chạy, hoặc áp dụng `db/008_word_creator_jobs.sql`. Chỉ một tác vụ hoạt động tại một thời điểm; gửi lại trong lúc chạy trả cùng mã tác vụ.
+- Worker chạy trong tiến trình Node/PM2 qua `src/instrumentation.ts`, không phụ thuộc kết nối HTTP. Cần giữ server chạy; cơ chế này không dành cho serverless.
+- Khi server khởi động lại, tác vụ đang chờ tiếp tục được nhận. Tác vụ đang render bị gián đoạn chuyển sang lỗi để người dùng quyết định tạo lại, tránh gọi AI lặp tự động.
+
+Nếu gặp HTML **HTTP 504** ở bản cũ, request đã chờ render quá lâu. Bản mới tách render khỏi request; không cần tăng timeout proxy theo số lượng video.
+
+Kiểm tra:
+
+```bash
+node --test tests/word-creator-*.test.mjs
+# Tùy chọn: WORD_CREATOR_TEST_DATABASE_URL bật kiểm tra PostgreSQL trong schema tạm.
+# WORD_CREATOR_RENDER_SMOKE=1 bật render GIF thật bằng Chromium/FFmpeg, không gọi AI/upload.
+```
+
+CLI: `node html-to-image.js --html template.html --output video.mp4 --duration 10 --fps 25`.
+Tự động khớp GIF bật mặc định; thêm `--fixed-fps` để giữ FPS đã nhập.
+Cần `ffmpeg`, `ffprobe` trong PATH (hoặc `FFMPEG_PATH`, `FFPROBE_PATH`) và Chromium.

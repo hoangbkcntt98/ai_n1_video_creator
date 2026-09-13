@@ -106,7 +106,8 @@ test("GET/DELETE select independent slots and preserve legacy daily default", as
   const route = load("src/app/api/schedule/route.ts", {
     "@/lib/scheduler": { ...service, startScheduler() {} },
   });
-  for (const [suffix, id] of [["", 1], ["?mode=daily", 1], ["?mode=interval", 2]]) {
+  for (const [suffix, id] of [["", 1], ["?mode=daily", 1], ["?mode=interval", 2],
+    ["?mode=daily&kind=kanji", 3], ["?mode=interval&kind=kanji", 4]]) {
     const request = new Request(`http://localhost/api/schedule${suffix}`);
     const read = await route.GET(request);
     assert.equal(read.status, 200);
@@ -116,7 +117,7 @@ test("GET/DELETE select independent slots and preserve legacy daily default", as
     assert.match(calls.at(-1).sql, /WHERE id = \$1/);
   }
   const count = calls.length;
-  for (const suffix of ["?mode=weekly", "?mode="]) {
+  for (const suffix of ["?mode=weekly", "?mode=", "?kind=unknown", "?kind="]) {
     assert.equal((await route.GET(new Request(`http://localhost/api/schedule${suffix}`))).status, 400);
     assert.equal((await route.DELETE(new Request(`http://localhost/api/schedule${suffix}`))).status, 400);
   }
@@ -127,6 +128,37 @@ test("GET/DELETE select independent slots and preserve legacy daily default", as
   for (const mode of ["daily", "interval"]) {
     assert.equal((await empty.GET(new Request(`http://localhost/api/schedule?mode=${mode}`))).status, 404);
   }
+});
+
+test("Kanji slots persist options and reject invalid kind/render inputs", async () => {
+  const calls = [];
+  const service = scheduler(async (sql, values) => {
+    calls.push({ sql, values });
+    return { rows: [{ id: values[13], kind: values[14], kanji_options: JSON.parse(values[15]),
+      mode: values[9], run_time: values[1], timezone: values[2] }] };
+  });
+  for (const [mode, id] of [["daily", 3], ["interval", 4]]) {
+    const result = await service.updatePipelineSchedule({ ...base, mode, kind: "kanji",
+      kanjiOptions: { source: " 語 ", durationSeconds: 12, fps: 40, autoFps: false } });
+    assert.equal(result.id, id);
+    assert.equal(result.kind, "kanji");
+    assert.equal(result.kanjiOptions.source, "語");
+    assert.equal(result.kanjiOptions.fps, 40);
+  }
+  for (const kanjiOptions of [{ fps: 0 }, { fps: 61 }, { fps: "25" }, { fps: 1.5 },
+    { durationSeconds: 0 }, { durationSeconds: 301 }, { autoFps: "true" }, { source: 123 }, []]) {
+    await assert.rejects(service.updatePipelineSchedule({ ...base, kind: "kanji", kanjiOptions }));
+  }
+  await assert.rejects(service.updatePipelineSchedule({ ...base, kind: "unknown" }));
+  assert.equal(calls.length, 2);
+  const route = load("src/app/api/schedule/route.ts", {
+    "@/lib/scheduler": { ...service, startScheduler() {} },
+  });
+  const response = await route.PUT(new Request("http://localhost/api/schedule?kind=kanji", {
+    method: "PUT", body: JSON.stringify({ ...base, kind: "grammar" }),
+  }));
+  assert.equal(response.status, 400);
+  assert.equal(calls.length, 2);
 });
 
 test("PUT rejects mismatched slots and invalid modes without changing either schedule", async () => {

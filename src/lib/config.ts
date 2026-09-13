@@ -13,6 +13,18 @@ function asBoolean(value: string | undefined, fallback: boolean) {
 
 export const appConfig = {
   databaseUrl: () => required("DATABASE_URL").replace(/\\@/g, "@"),
+  ankiDatabaseUrl: () => {
+    const configured = process.env.ANKI_DATABASE_URL?.trim();
+    if (configured) return configured.replace(/\\@/g, "@");
+    const base = new URL(appConfig.databaseUrl());
+    base.pathname = "/anki";
+    return base.toString();
+  },
+  wordCreatorOutputDir: () => process.env.WORD_CREATOR_OUTPUT_DIR?.trim() || path.join(appConfig.dataDir(), "word-creator"),
+  wordCreatorDuration: () => {
+    const value = Number(process.env.WORD_CREATOR_DURATION_SECONDS || 10);
+    return Number.isFinite(value) && value > 0 ? value : 10;
+  },
   skillDir: () => process.env.JLPT_N1_SKILL_DIR?.trim() || "/home/opc/openclaw_skill/jlpt-n1",
   dataDir: () => process.env.DATA_DIR?.trim() || "/mnt/openclaw-data/openclaw",
   outputDir: () => process.env.OUTPUT_DIR?.trim() || "/mnt/openclaw-data/openclaw/outputs",

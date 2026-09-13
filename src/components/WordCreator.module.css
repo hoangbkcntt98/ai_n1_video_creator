@@ -1,0 +1,14 @@
+.layout { display:grid; gap:18px; }.panel { padding:22px; border:1px solid #263b57; border-radius:18px; background:linear-gradient(135deg,rgba(20,38,66,.95),rgba(11,23,42,.95)); }.fields { display:flex; flex-wrap:wrap; align-items:end; gap:12px; }.fields label { display:grid; gap:7px; min-width:210px; color:#dcecff; font-size:13px; }.fields input { min-height:40px; }.fields button { min-height:40px; }.hint { color:#8fa4c2; font-size:13px; line-height:1.5; }.success,.error { margin:15px 0 0; padding:10px 12px; border-radius:8px; font-size:13px; }.success { color:#8cf0c8; background:rgba(109,232,190,.1); }.error { color:#ffb7ba; background:rgba(255,100,100,.1); }.title { display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; }.title h2 { margin:0; font-size:20px; }.title span { color:#8fa4c2; }.table { display:grid; gap:9px; max-height:620px; overflow:auto; }.table article { display:grid; gap:5px; padding:11px 12px; border:1px solid #29425f; border-radius:9px; background:#0b1a2e; color:#dcecff; font-size:13px; }.table small,.table code { color:#8fa4c2; font-size:11px; overflow-wrap:anywhere; }
+.table article { grid-template-columns: minmax(0, 180px) minmax(0, 1fr); gap:16px; align-items:start; }
+.video { display:block; width:100%; aspect-ratio:9/16; object-fit:contain; background:#000; border-radius:8px; }
+.noVideo { display:grid; place-items:center; aspect-ratio:9/16; color:#8fa4c2; background:#071322; border-radius:8px; }
+.cardInfo { display:grid; gap:10px; min-width:0; overflow-wrap:anywhere; }
+.cardInfo strong { font-size:24px; }
+.cardInfo a { color:#8acbff; }
+.fields select { min-height:40px; max-width:360px; }
+.sourcePages { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin-top:12px; color:#8fa4c2; font-size:12px; }
+.log { max-height:300px; overflow:auto; padding:14px; border:1px solid #29425f; border-radius:8px; background:#06111f; color:#b9d8f2; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; line-height:1.6; }
+@media (max-width:600px) {
+  .table article { grid-template-columns:minmax(0, 1fr); }
+  .video,.noVideo { max-width:240px; justify-self:center; }
+}

@@ -1,5 +1,6 @@
 import { Pool, type QueryResultRow } from "pg";
 import { appConfig } from "@/lib/config";
+import * as fs from "fs";
 
 let pool: Pool | undefined;
 let schemaPromise: Promise<void> | undefined;
@@ -43,7 +44,7 @@ export async function ensureVideoCreatorSchema() {
       // Replace the original CHECK so existing installations accept YouTube runs.
       await query(`ALTER TABLE video_creator_runs DROP CONSTRAINT IF EXISTS video_creator_runs_action_check,
         ADD CONSTRAINT video_creator_runs_action_check
-        CHECK (action IN ('create_next', 'generate_pattern', 'publish', 'youtube_publish'))`);
+        CHECK (action IN ('create_next', 'generate_pattern', 'publish', 'youtube_publish', 'create_kanji'))`);
      await query(`CREATE TABLE IF NOT EXISTS video_creator_videos (
         relative_path TEXT PRIMARY KEY,
         title TEXT NOT NULL DEFAULT '',
@@ -115,6 +116,16 @@ export async function ensureVideoCreatorSchema() {
               CHECK ((id = 1 AND mode = 'daily') OR (id = 2 AND mode = 'interval'));
           END IF;
         END $$`);
+      await query(`ALTER TABLE video_creator_schedule
+        ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'grammar',
+        ADD COLUMN IF NOT EXISTS kanji_options JSONB NOT NULL DEFAULT '{"durationSeconds":10,"fps":25,"autoFps":true}'`);
+      await query(fs.readFileSync("db/013_word_creator_status.sql", "utf8"));
+      await query(fs.readFileSync("db/014_word_creator_status_key.sql", "utf8"));
+      await query(`ALTER TABLE video_creator_schedule DROP CONSTRAINT IF EXISTS video_creator_schedule_slot_check,
+        ADD CONSTRAINT video_creator_schedule_slot_check CHECK (
+          (kind = 'grammar' AND ((id = 1 AND mode = 'daily') OR (id = 2 AND mode = 'interval'))) OR
+          (kind = 'kanji' AND ((id = 3 AND mode = 'daily') OR (id = 4 AND mode = 'interval')))
+        )`);
       await query(`CREATE TABLE IF NOT EXISTS video_creator_quota_schedule (
         id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
         enabled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -140,6 +151,31 @@ export async function ensureVideoCreatorSchema() {
     })().catch((error) => { schemaPromise = undefined; throw error; });
   }
   return schemaPromise;
+}
+
+export async function ensureWordCreatorSchema() {
+  await query(`CREATE TABLE IF NOT EXISTS word_creator_questions (
+    id BIGSERIAL PRIMARY KEY,
+    anki_note_id BIGINT,
+    source TEXT NOT NULL,
+    required_vocabulary TEXT NOT NULL,
+    answer_a TEXT NOT NULL,
+    answer_b TEXT NOT NULL,
+    answer_c TEXT NOT NULL,
+    answer_d TEXT NOT NULL,
+    correct_index SMALLINT NOT NULL CHECK (correct_index BETWEEN 0 AND 3),
+    correct_answer TEXT NOT NULL,
+    template_path TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (source, required_vocabulary)
+  )`);
+  await query(`CREATE INDEX IF NOT EXISTS word_creator_questions_source_idx ON word_creator_questions (source)`);
+  await query(`ALTER TABLE word_creator_questions
+    ADD COLUMN IF NOT EXISTS video_path TEXT,
+    ADD COLUMN IF NOT EXISTS duration_seconds NUMERIC,
+    ADD COLUMN IF NOT EXISTS fps SMALLINT NOT NULL DEFAULT 30 CHECK (fps BETWEEN 1 AND 60)`);
+  await query("ALTER TABLE word_creator_questions ALTER COLUMN fps SET DEFAULT 25");
 }
 
 export function processAlive(pid: number) {

@@ -9,5 +9,7 @@ export async function register() {
     await resumeActiveRuns().catch(() => {});
     const { startScheduler } = await import("@/lib/scheduler");
     startScheduler();
+    const { startWordCreatorWorker } = await import("@/lib/wordCreatorJobs");
+    startWordCreatorWorker();
   }
 }

@@ -31,9 +31,11 @@ export function toRelativeStudioPath(filePath: string) {
   return relative.split(path.sep).join("/");
 }
 
-export async function runCommand(command: string, args: string[]) {
+export async function runCommand(command: string, args: string[], onStdout?: (chunk: string) => void) {
   try {
-    return await execFileAsync(command, args, { maxBuffer: 12 * 1024 * 1024 });
+    const running = execFileAsync(command, args, { maxBuffer: 12 * 1024 * 1024 });
+    if (onStdout) running.child.stdout?.setEncoding("utf8").on("data", onStdout);
+    return await running;
   } catch (error) {
     const details = error as { stderr?: string; stdout?: string; message?: string };
     throw new Error((details.stderr || details.stdout || details.message || `Không chạy được ${command}`).trim().slice(-4000));

@@ -13,11 +13,13 @@ export const revalidate = 0;
 
 export default async function Home() {
   const dashboard = await getDashboard();
-  return <main className={styles.page}><header className={styles.header}><div className={styles.brand}><span className={styles.mark}>VC</span><div><strong>Video Creator</strong><small>JLPT N1 · Facebook Reels</small></div></div><nav className={styles.headerActions}><Link href="/patterns">Grammar Patterns</Link><Link href="/studio">Video Studio</Link><Link href="/library">Library</Link><Link href="/quota">Codex Quota</Link><AppSwitcher /><LogoutButton /></nav></header>
+  return <main className={styles.page}><header className={styles.header}><div className={styles.brand}><span className={styles.mark}>VC</span><div><strong>Video Creator</strong><small>JLPT N1 · Facebook Reels</small></div></div><nav className={styles.headerActions}><Link href="/patterns">Grammar Patterns</Link><Link href="/studio">Video Studio</Link><Link href="/word-creator">WordCreator</Link><Link href="/library">Library</Link><Link href="/quota">Codex Quota</Link><AppSwitcher /><LogoutButton /></nav></header>
     <div className={styles.content}>
       <DashboardControls patterns={dashboard.patterns}/>
       <PipelineScheduleSettings mode="daily" />
       <PipelineScheduleSettings mode="interval" />
+      <PipelineScheduleSettings mode="daily" kind="kanji" />
+      <PipelineScheduleSettings mode="interval" kind="kanji" />
       <QuotaScheduleSettings />
         {dashboard.warnings.length ? <aside className={styles.warning}>{dashboard.warnings.map((warning) => <p key={warning}>{warning}</p>)}</aside> : null}
         <section className={styles.runSection}><div className={styles.sectionHeading}><div><p className="eyebrow">PIPELINE</p><h2>Run History</h2></div><span>{dashboard.patterns.length} patterns from grammar_patterns</span></div><RunHistory runs={dashboard.runs}/></section>

@@ -16,9 +16,10 @@ const timezoneOptions = [
   "America/Los_Angeles",
 ];
 
-export default function PipelineScheduleSettings({ mode }: { mode: Schedule["mode"] }) {
-  const title = mode === "daily" ? "Daily Schedule" : "Repeat every N hours";
-  const endpoint = `${basePath}/api/schedule?mode=${mode}`;
+export default function PipelineScheduleSettings({ mode, kind = "grammar" }: { mode: Schedule["mode"]; kind?: Schedule["kind"] }) {
+  const title = `${kind === "kanji" ? "Kanji" : "Grammar"} · ${mode === "daily" ? "Daily Schedule" : "Repeat every N hours"}`;
+  const panelId = `${kind}-${mode}`;
+  const endpoint = `${basePath}/api/schedule?mode=${mode}&kind=${kind}`;
   const [schedule, setSchedule] = useState<Schedule | null>(null);
   const [runTime, setRunTime] = useState("09:00");
   const [startsAt, setStartsAt] = useState("");
@@ -27,6 +28,10 @@ export default function PipelineScheduleSettings({ mode }: { mode: Schedule["mod
   const [timezone, setTimezone] = useState("UTC");
   const [enabled, setEnabled] = useState(false);
   const [forceRecreate, setForceRecreate] = useState(false);
+  const [source, setSource] = useState("");
+  const [durationSeconds, setDurationSeconds] = useState("10");
+  const [fps, setFps] = useState("25");
+  const [autoFps, setAutoFps] = useState(true);
   const [publishToFacebook, setPublishToFacebook] = useState(false);
   const [publishToYouTube, setPublishToYouTube] = useState(false);
   const [youtubePrivacy, setYoutubePrivacy] = useState<Schedule["youtubePrivacy"]>("private");
@@ -56,6 +61,10 @@ export default function PipelineScheduleSettings({ mode }: { mode: Schedule["mod
         setTimezone(value.timezone || browserTimezone || "UTC");
         setEnabled(value.enabled);
         setForceRecreate(value.forceRecreate);
+        setSource(value.kanjiOptions?.source ?? "");
+        setDurationSeconds(String(value.kanjiOptions?.durationSeconds ?? 10));
+        setFps(String(value.kanjiOptions?.fps ?? 25));
+        setAutoFps(value.kanjiOptions?.autoFps ?? true);
         setPublishToFacebook(value.publishToFacebook);
         setPublishToYouTube(value.publishToYouTube ?? false);
         setYoutubePrivacy(value.youtubePrivacy || "private");
@@ -73,6 +82,11 @@ export default function PipelineScheduleSettings({ mode }: { mode: Schedule["mod
   }, [endpoint]);
 
   async function save() {
+    if (kind === "kanji" && (!Number.isFinite(Number(durationSeconds)) || Number(durationSeconds) <= 0 ||
+        Number(durationSeconds) > 300 || !Number.isInteger(Number(fps)) || Number(fps) < 1 || Number(fps) > 60)) {
+      setError("Kanji: duration must be greater than 0 and at most 300 seconds; FPS must be 1–60.");
+      return;
+    }
     if (mode === "interval" && (!startsAt || !Number.isInteger(Number(intervalHours)) ||
         Number(intervalHours) < 1 || Number(intervalHours) > 8760 ||
         !Number.isInteger(Number(videosPerRun)) || Number(videosPerRun) < 1 || Number(videosPerRun) > 100)) {
@@ -86,6 +100,9 @@ export default function PipelineScheduleSettings({ mode }: { mode: Schedule["mod
     if (enabled && publishToYouTube && !window.confirm(
       `Enable automatic YouTube uploads with ${youtubePrivacy} visibility after each scheduled video is created? Future uploads will not ask for confirmation. The selected audience and content disclosure apply to every generated video.`,
     )) return;
+    if (enabled && publishToFacebook && !window.confirm(
+      `Enable automatic Facebook publishing for ${title}? Future videos will be posted without another confirmation.`,
+    )) return;
     setBusy(true);
     setMessage("");
     setError("");
@@ -94,6 +111,8 @@ export default function PipelineScheduleSettings({ mode }: { mode: Schedule["mod
         method: "PUT",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          kind,
+          ...(kind === "kanji" ? { kanjiOptions: { source: source.trim(), durationSeconds: Number(durationSeconds), fps: Number(fps), autoFps } } : {}),
           enabled, runTime, timezone, forceRecreate, publishToFacebook, publishToYouTube, youtubePrivacy,
           mode, startsAt, intervalHours: Number(intervalHours), videosPerRun: Number(videosPerRun),
           youtubeMadeForKids: youtubeAudience ? youtubeAudience === "yes" : null,
@@ -114,7 +133,7 @@ export default function PipelineScheduleSettings({ mode }: { mode: Schedule["mod
   }
 
   async function remove() {
-    if (!window.confirm(`Delete ${title} and cancel its queued videos? The other schedule is unchanged. Running videos and their uploads will continue.`)) return;
+    if (!window.confirm(`Delete ${title} and cancel its queued videos? Other schedules are unchanged. Running videos and their uploads will continue.`)) return;
     setBusy(true);
     setMessage("");
     setError("");
@@ -127,6 +146,11 @@ export default function PipelineScheduleSettings({ mode }: { mode: Schedule["mod
       setStartsAt("");
       setIntervalHours("5");
       setVideosPerRun("4");
+      setSource("");
+      setDurationSeconds("10");
+      setFps("25");
+      setAutoFps(true);
+      setForceRecreate(false);
       setPublishToFacebook(false);
       setPublishToYouTube(false);
       setYoutubePrivacy("private");
@@ -141,17 +165,17 @@ export default function PipelineScheduleSettings({ mode }: { mode: Schedule["mod
   }
 
   return (
-    <section className={styles.schedulePanel} aria-labelledby={`schedule-heading-${mode}`}>
+    <section className={styles.schedulePanel} aria-labelledby={`schedule-heading-${panelId}`}>
       <div className={styles.sectionHeading}>
         <div>
           <p className="eyebrow">AUTOMATION</p>
-          <h2 id={`schedule-heading-${mode}`}>{title}</h2>
+          <h2 id={`schedule-heading-${panelId}`}>{title}</h2>
         </div>
         <span className={enabled ? styles.scheduleEnabled : styles.scheduleDisabled}>{enabled ? "Enabled" : "Disabled"}</span>
       </div>
       <p className={styles.scheduleDescription}>
         {mode === "daily" ? "Create one video each day at the selected time." : "Repeat a batch every N hours from a chosen start time."}
-        {" "}Both schedules can be enabled independently. Due videos share one worker and run sequentially with their selected uploads.
+        {" "}Grammar and Kanji daily/interval schedules are independent. Due videos share one worker and run sequentially with their selected uploads.
       </p>
       <div className={styles.scheduleFields}>
         <label className={styles.scheduleToggle}>
@@ -177,9 +201,25 @@ export default function PipelineScheduleSettings({ mode }: { mode: Schedule["mod
         </>}
         <label>
           Timezone
-          <input list={`schedule-timezones-${mode}`} value={timezone} onChange={(event) => setTimezone(event.target.value)} disabled={busy} />
-          <datalist id={`schedule-timezones-${mode}`}>{timezoneOptions.map((option) => <option value={option} key={option} />)}</datalist>
+          <input list={`schedule-timezones-${panelId}`} value={timezone} onChange={(event) => setTimezone(event.target.value)} disabled={busy} />
+          <datalist id={`schedule-timezones-${panelId}`}>{timezoneOptions.map((option) => <option value={option} key={option} />)}</datalist>
         </label>
+        {kind === "kanji" ? <>
+          <label>Kanji source (optional)
+            <input value={source} maxLength={500} onChange={(event) => setSource(event.target.value)} disabled={busy} placeholder="Auto-select from Anki" />
+          </label>
+          <label>Video duration (seconds)
+            <input type="number" min="0.1" max="300" step="0.1" value={durationSeconds} onChange={(event) => setDurationSeconds(event.target.value)} disabled={busy} />
+          </label>
+          <label>FPS
+            <input type="number" min="1" max="60" step="1" value={fps} onChange={(event) => setFps(event.target.value)} disabled={busy} />
+          </label>
+          <label className={styles.scheduleToggle}>
+            <input type="checkbox" checked={autoFps} onChange={(event) => setAutoFps(event.target.checked)} disabled={busy} />
+            Auto FPS matching GIF
+          </label>
+          <p className={styles.scheduleDescription}>Selects Kanji without a generated video from Anki. Force recreate includes existing videos, oldest first. If none remain, the batch stops without uploading.</p>
+        </> : null}
         {mode === "interval" ? <p className={styles.scheduleDescription}>
           Start time uses the timezone above, not the server timezone. For example: 4 videos every 5 hours from 12/09/2026 15:00:00.
           {" "}Batches stay anchored to that start. If busy or offline, finish queued videos first, then run only the latest missed batch.
@@ -219,7 +259,7 @@ export default function PipelineScheduleSettings({ mode }: { mode: Schedule["mod
         </button>
         {schedule ? <button type="button" onClick={() => void remove()} disabled={busy}>Delete Schedule</button> : null}
       </div>
-      <p className={styles.scheduleDescription}>Saving or disabling cancels this schedule&apos;s videos not yet started. The other schedule is unchanged. Running videos and their uploads continue.</p>
+      <p className={styles.scheduleDescription}>Saving or disabling cancels this schedule&apos;s videos not yet started. Other schedules are unchanged. Running videos and their uploads continue.</p>
       {schedule?.nextRunAt ? <p className={styles.scheduleMeta}>Next batch: {new Intl.DateTimeFormat("en-GB", {
         timeZone: schedule.timezone, dateStyle: "short", timeStyle: "medium",
       }).format(new Date(schedule.nextRunAt))} ({schedule.timezone})</p> : null}

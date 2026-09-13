@@ -49,6 +49,8 @@ test("PostgreSQL schedule queue integration", { skip: !process.env.SCHEDULE_TEST
   const workers = [];
   let captionGate = null;
   let configured = true;
+  let kanjiBusy = false;
+  const kanjiJobs = [];
   const youtube = { ...load("src/lib/youtube.ts", {}), youtubeConfiguration: () => ({ configured, missing: ["YOUTUBE_REFRESH_TOKEN"] }) };
   const pipeline = load("src/lib/pipeline.ts", {
     "node:fs": {
@@ -80,6 +82,13 @@ test("PostgreSQL schedule queue integration", { skip: !process.env.SCHEDULE_TEST
     "@/lib/video": { markFacebookPublished: async () => {}, markFacebookScheduled: async () => {},
       markYouTubeUploaded: async () => {}, saveVideoDetails: async () => {} },
     "@/lib/youtube": youtube,
+    "@/lib/wordCreatorJobs": {
+      getWordCreatorJob: async () => kanjiBusy ? { status: "running" } : null,
+      enqueueWordCreator: async (options, reuseActive) => {
+        assert.equal(reuseActive, false);
+        kanjiJobs.push(options);
+      },
+    },
   });
   function scheduler() {
     return load("src/lib/scheduler.ts", { "@/lib/db": { ...db, query }, "@/lib/pipeline": pipeline,
@@ -93,6 +102,7 @@ test("PostgreSQL schedule queue integration", { skip: !process.env.SCHEDULE_TEST
   async function reset(changes = {}) {
     await pool.query("TRUNCATE video_creator_runs, video_creator_schedule RESTART IDENTITY CASCADE");
     workers.length = 0; files.clear(); errors.length = 0; configured = true; captionGate = null;
+    kanjiJobs.length = 0; kanjiBusy = false;
     return service.updatePipelineSchedule({ ...input, ...changes });
   }
   async function runs() { return (await pool.query("SELECT * FROM video_creator_runs ORDER BY id")).rows; }
@@ -106,6 +116,66 @@ test("PostgreSQL schedule queue integration", { skip: !process.env.SCHEDULE_TEST
         : 'Video ready: /outputs/example_video.mp4\n{"success":true}');
     await workers.find((worker) => worker.pid === run.runner_pid).listeners("close")[0](code);
   }
+
+  await t.test("Kanji migration preserves Grammar and supports four independent schedules", async () => {
+    await reset();
+    await service.updatePipelineSchedule(dailyInput);
+    const before = (await pool.query("SELECT * FROM video_creator_schedule ORDER BY id")).rows;
+    const migration = fs.readFileSync("db/012_kanji_schedules.sql", "utf8");
+    await pool.query(migration);
+    await pool.query(migration);
+    assert.deepEqual((await pool.query("SELECT * FROM video_creator_schedule ORDER BY id")).rows, before);
+    await service.updatePipelineSchedule({ ...dailyInput, kind: "kanji" });
+    await service.updatePipelineSchedule({ ...input, kind: "kanji", kanjiOptions: { fps: 40, durationSeconds: 12 } });
+    assert.deepEqual((await pool.query("SELECT id FROM video_creator_schedule ORDER BY id")).rows.map((r) => r.id), [1, 2, 3, 4]);
+    await pipeline.startGeneration({});
+    await service.tickSchedule(start);
+    assert.equal((await jobs()).length, 10);
+    const grammar = (await jobs()).filter((j) => j.schedule_id <= 2);
+    await service.updatePipelineSchedule({ ...input, kind: "kanji", enabled: false });
+    await service.deletePipelineSchedule("daily", "kanji");
+    assert.deepEqual((await jobs()).filter((j) => j.schedule_id <= 2), grammar);
+    assert.deepEqual((await pool.query("SELECT * FROM video_creator_schedule WHERE id <= 2 ORDER BY id")).rows.map((r) => ({
+      ...r, last_scheduled_at: before.find((b) => b.id === r.id).last_scheduled_at,
+      last_run_date: before.find((b) => b.id === r.id).last_run_date,
+      updated_at: before.find((b) => b.id === r.id).updated_at,
+    })), before);
+  });
+
+  await t.test("Kanji busy waits; generated video uploads Facebook then YouTube with Kanji metadata", async () => {
+    await reset({ kind: "kanji", videosPerRun: 2, publishToFacebook: true, publishToYouTube: true,
+      youtubePrivacy: "private", youtubeMadeForKids: false, youtubeContainsSyntheticMedia: true,
+      kanjiOptions: { fps: 40, durationSeconds: 12, autoFps: false } });
+    kanjiBusy = true;
+    await service.tickSchedule(start);
+    assert.equal((await jobs()).length, 2);
+    assert.equal((await runs()).length, 0);
+    kanjiBusy = false;
+    await service.tickSchedule(start);
+    assert.equal((await runs())[0].action, "create_kanji");
+    assert.equal(workers.length, 0, "Kanji does not spawn Grammar Python pipeline");
+    assert.equal(kanjiJobs[0].fps, 40);
+    assert.equal(kanjiJobs[0].limit, 1);
+    assert.equal(kanjiJobs[0].scheduled, true);
+    await pipeline.finishKanjiGeneration(kanjiJobs[0].pipelineRunId, {
+      videoPath: "kanji/語.mp4", source: "語", requiredVocabulary: "語る",
+    });
+    assert.deepEqual((await runs()).map((r) => r.action), ["create_kanji", "publish"]);
+    const facebook = (await runs())[1];
+    assert.equal(facebook.after_run_publish.title, "語 語る");
+    assert.equal(facebook.after_run_publish.caption, "WordCreator: 語る");
+    await service.tickSchedule(start);
+    assert.equal(kanjiJobs.length, 1, "next render waits for upload");
+    await finish();
+    assert.equal((await runs()).at(-1).action, "youtube_publish");
+    await finish();
+    await service.tickSchedule(start);
+    assert.equal(kanjiJobs.length, 2);
+    await pipeline.finishKanjiGeneration(kanjiJobs[1].pipelineRunId, undefined, "No remaining Kanji");
+    assert.equal((await runs()).at(-1).status, "failed");
+    assert.equal((await runs()).filter((r) => r.action === "publish").length, 1, "failed Kanji never uploads");
+    assert.deepEqual(errors, []);
+  });
 
   for (const mode of ["daily", "interval"]) {
     for (const method of ["runtime", "sql"]) {

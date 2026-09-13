@@ -1,13 +1,24 @@
 # Lịch tạo video trên Dashboard
 
-Dashboard có hai khung **AUTOMATION** độc lập:
+Dashboard có bốn khung **AUTOMATION** độc lập, tách **Grammar** và **Kanji**. Mỗi loại có:
 
 - **Daily Schedule**: mỗi ngày tạo một video vào giờ đã chọn.
 - **Repeat every N hours**: mỗi đợt tạo số video chỉ định, lặp theo số giờ tính từ mốc bắt đầu.
 
 Mỗi khung có cấu hình, múi giờ, bật/tắt, nút lưu/xóa, tùy chọn upload,
-trạng thái và hàng đợi riêng. Có thể bật **cả hai cùng lúc**.
-Lưu, tắt hoặc xóa một lịch không thay đổi lịch còn lại.
+trạng thái và hàng đợi riêng. Có thể bật cả bốn cùng lúc.
+Lưu, tắt hoặc xóa một lịch không thay đổi các lịch còn lại.
+
+## Cấu hình Kanji
+
+- Dùng **Kanji · Daily Schedule** hoặc **Kanji · Repeat every N hours**.
+- **Kanji source (optional)**: lọc source trong Anki; để trống để tự chọn.
+- Thời lượng mặc định **10 giây**, FPS **25**, tự động khớp GIF bật mặc định.
+- Tự chọn record `AIKanjiWithImage` chưa có video theo cặp source/RequiredVocabulary.
+  **Force recreate existing content** cho phép tạo lại; ưu tiên chưa tạo, rồi video cũ nhất.
+- Hết Kanji phù hợp hoặc render lỗi: dừng phần còn lại của đợt, không đăng video lỗi.
+- Tự đăng Facebook/YouTube dùng cùng quy trình Grammar nhưng lấy title/caption Kanji.
+  Log hiện trong **Run History** và màn WordCreator.
 
 ## Ví dụ: cứ 5 giờ tạo 4 video
 
@@ -33,8 +44,8 @@ Mốc lặp tính từ giờ bắt đầu, không tính từ lúc video cuối c
 - Scheduler kiểm tra mỗi **10 giây** khi app chạy. Không cam kết khởi chạy đúng từng giây.
 - Chỉ một pipeline/upload chạy tại một thời điểm. Mỗi video hoàn tất upload đã chọn
   (Facebook trước, YouTube sau) rồi hàng đợi mới nhận video tiếp theo.
-- Hai lịch trùng giờ: cả hai được đưa vào hàng đợi riêng, không ghi đè hoặc bỏ lượt
-  vì lịch kia đang chạy. Worker chọn video đến hạn sớm nhất giữa hai hàng đợi;
+- Các lịch trùng giờ: đều được đưa vào hàng đợi riêng, không ghi đè hoặc bỏ lượt
+  vì lịch khác đang chạy. Worker chọn video đến hạn sớm nhất giữa các hàng đợi;
   nếu cùng mốc, ưu tiên công việc được đưa vào hàng đợi trước.
 - Server bận: mỗi lịch vẫn ghi nhận đợt đến hạn nếu không còn video chờ của lịch đó.
   Server offline hoặc đợt chạy quá lâu:
@@ -58,11 +69,13 @@ Mốc lặp tính từ giờ bắt đầu, không tính từ lúc video cuối c
 
 Schema mới được thêm tự động khi app khởi động. Migration khoảng giờ:
 `db/004_interval_schedule.sql`; migration tách hai lịch:
-`db/005_independent_schedules.sql`.
+`db/005_independent_schedules.sql`; migration tách Kanji:
+`db/012_kanji_schedules.sql`.
 
 Lịch hằng ngày đang có giữ slot `id=1`. Lịch interval cũ chuyển sang `id=2`,
 giữ cấu hình, hàng đợi, mốc đã nhận và lịch sử run. Lịch còn lại không tự bật.
 Không cần sửa `.env.local` để dùng lịch interval.
+Hai slot Grammar `1/2` giữ nguyên. Kanji dùng `3/4`, không tự bật hay thay đổi lịch Grammar.
 
 Sau khi kiểm tra và đợi công việc hiện tại hoàn tất, build/restart theo quy trình triển khai của dự án.
 
@@ -76,3 +89,6 @@ Sau khi kiểm tra và đợi công việc hiện tại hoàn tất, build/resta
   `mode` trong body, mặc định `daily` nếu cả hai đều thiếu.
 - Chưa có cấu hình cho lịch được hỏi: GET trả `404`. Mode không hợp lệ hoặc
   query/body không khớp: trả `400`, không sửa lịch nào.
+- Thêm `&kind=kanji` để đọc/lưu/xóa lịch Kanji; mặc định `kind=grammar` để giữ tương thích.
+  Body PUT có thể chứa `kind` và `kanjiOptions: { source, durationSeconds, fps, autoFps }`.
+  Nếu query và body cùng có `kind`, chúng phải khớp.

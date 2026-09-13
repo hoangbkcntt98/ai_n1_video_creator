@@ -1,10 +1,17 @@
 import { startFacebookPublish } from "@/lib/pipeline";
-import { saveVideoDetails, listVideos } from "@/lib/video";
+import { saveVideoDetails, listVideos, getVideoDetails } from "@/lib/video";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
+    const path = new URL(request.url).searchParams.get("path");
+    if (path !== null) {
+      const video = await getVideoDetails(path);
+      return video
+        ? Response.json({ video }, { headers: { "Cache-Control": "no-store" } })
+        : Response.json({ error: "Không tìm thấy video." }, { status: 404 });
+    }
     const videos = await listVideos();
     return Response.json({ videos });
   } catch (error) {

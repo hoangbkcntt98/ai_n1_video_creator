@@ -1,10 +1,12 @@
 import { ensureVideoCreatorSchema, query } from "@/lib/db";
-import { startGeneration } from "@/lib/pipeline";
+import { startGeneration, startKanjiGeneration } from "@/lib/pipeline";
 import { startQuotaScheduler } from "@/lib/quotaScheduler";
 import { validateYouTubePublishSettings, youtubeConfiguration } from "@/lib/youtube";
 
 export type PipelineSchedule = {
   id: number;
+  kind: "grammar" | "kanji";
+  kanjiOptions: { source?: string; durationSeconds: number; fps: number; autoFps: boolean };
   enabled: boolean;
   mode: "daily" | "interval";
   runTime: string;
@@ -31,6 +33,8 @@ export type PipelineSchedule = {
 
 type ScheduleRow = {
   id: number;
+  kind: PipelineSchedule["kind"];
+  kanji_options: PipelineSchedule["kanjiOptions"];
   enabled: boolean;
   mode: PipelineSchedule["mode"];
   run_time: string;
@@ -74,6 +78,8 @@ function mapSchedule(row: ScheduleRow): PipelineSchedule {
     ? intervalTiming(startsAtUtc, row.interval_hours, lastRunAt) : null;
   return {
     id: row.id,
+    kind: row.kind ?? "grammar",
+    kanjiOptions: row.kanji_options ?? { durationSeconds: 10, fps: 25, autoFps: true },
     enabled: row.enabled,
     mode: row.mode ?? "daily",
     runTime: row.run_time.slice(0, 5),
@@ -134,7 +140,7 @@ export function validateIntervalSettings(input: { startsAt?: unknown; intervalHo
   return { startsAt: normalized, intervalHours, videosPerRun };
 }
 
-const scheduleColumns = `id, enabled, mode, run_time::text, timezone, starts_at::text,
+const scheduleColumns = `id, kind, kanji_options, enabled, mode, run_time::text, timezone, starts_at::text,
   to_char(starts_at AT TIME ZONE timezone, 'YYYY-MM-DD"T"HH24:MI:SS') AS starts_at_local,
   interval_hours, videos_per_run, revision::text, force_recreate,
   publish_to_facebook, publish_to_youtube, youtube_privacy,
@@ -146,12 +152,31 @@ export function validateScheduleMode(mode: unknown): PipelineSchedule["mode"] {
   return mode;
 }
 
-function scheduleId(mode: unknown) {
-  return validateScheduleMode(mode) === "daily" ? 1 : 2;
+export function validateScheduleKind(kind: unknown): PipelineSchedule["kind"] {
+  if (kind !== "grammar" && kind !== "kanji") throw new Error("Choose grammar or kanji schedule.");
+  return kind;
 }
 
-export async function getPipelineSchedule(mode: PipelineSchedule["mode"] = "daily") {
-  const id = scheduleId(mode);
+export function validateKanjiScheduleOptions(value: unknown): PipelineSchedule["kanjiOptions"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid Kanji render settings.");
+  const input = value as Record<string, unknown>;
+  const durationSeconds = input.durationSeconds === undefined ? 10 : input.durationSeconds;
+  const fps = input.fps === undefined ? 25 : input.fps;
+  const autoFps = input.autoFps === undefined ? true : input.autoFps;
+  if (typeof durationSeconds !== "number" || !Number.isFinite(durationSeconds) || durationSeconds <= 0 || durationSeconds > 300 ||
+      typeof fps !== "number" || !Number.isInteger(fps) || fps < 1 || fps > 60 || typeof autoFps !== "boolean" ||
+      (input.source !== undefined && (typeof input.source !== "string" || input.source.length > 500))) {
+    throw new Error("Kanji: duration must be greater than 0 and at most 300 seconds, FPS 1–60, autoFps boolean, source at most 500 characters.");
+  }
+  return { durationSeconds, fps, autoFps, ...(typeof input.source === "string" && input.source.trim() ? { source: input.source.trim() } : {}) };
+}
+
+function scheduleId(mode: unknown, kind: unknown = "grammar") {
+  return (validateScheduleMode(mode) === "daily" ? 1 : 2) + (validateScheduleKind(kind) === "kanji" ? 2 : 0);
+}
+
+export async function getPipelineSchedule(mode: PipelineSchedule["mode"] = "daily", kind: PipelineSchedule["kind"] = "grammar") {
+  const id = scheduleId(mode, kind);
   await ensureVideoCreatorSchema();
   const result = await query<ScheduleRow>(`SELECT ${scheduleColumns},
     (SELECT COUNT(*) FROM video_creator_schedule_jobs jobs
@@ -163,6 +188,8 @@ export async function getPipelineSchedule(mode: PipelineSchedule["mode"] = "dail
 }
 
 export async function updatePipelineSchedule(input: {
+  kind?: unknown;
+  kanjiOptions?: unknown;
   enabled: boolean;
   mode?: unknown;
   startsAt?: unknown;
@@ -178,6 +205,8 @@ export async function updatePipelineSchedule(input: {
   youtubeContainsSyntheticMedia?: unknown;
 }) {
   const mode = validateScheduleMode(input.mode === undefined ? "daily" : input.mode);
+  const kind = validateScheduleKind(input.kind === undefined ? "grammar" : input.kind);
+  const kanji = validateKanjiScheduleOptions(kind === "kanji" ? input.kanjiOptions ?? {} : {});
   const runTime = validateTime(input.runTime);
   const timezone = validateTimezone(input.timezone);
   const interval = mode === "interval" ? validateIntervalSettings(input) : null;
@@ -195,9 +224,9 @@ export async function updatePipelineSchedule(input: {
   const result = await query<ScheduleRow>(`INSERT INTO video_creator_schedule
     (id, enabled, run_time, timezone, force_recreate, publish_to_facebook,
       publish_to_youtube, youtube_privacy, youtube_made_for_kids, youtube_contains_synthetic_media,
-      mode, starts_at, interval_hours, videos_per_run, last_error, updated_at)
+      mode, starts_at, interval_hours, videos_per_run, last_error, updated_at, kind, kanji_options)
     SELECT $14, $1, $2::time, $3, $4, $5, $6, $7, $8, $9,
-      $10, $11::timestamp AT TIME ZONE $3, $12, $13, NULL, NOW()
+      $10, $11::timestamp AT TIME ZONE $3, $12, $13, NULL, NOW(), $15, $16::jsonb
     WHERE $11::timestamp IS NULL OR
       (($11::timestamp AT TIME ZONE $3) AT TIME ZONE $3) = $11::timestamp
     ON CONFLICT (id) DO UPDATE SET
@@ -207,6 +236,7 @@ export async function updatePipelineSchedule(input: {
       youtube_made_for_kids = EXCLUDED.youtube_made_for_kids,
       youtube_contains_synthetic_media = EXCLUDED.youtube_contains_synthetic_media,
       mode = EXCLUDED.mode, starts_at = EXCLUDED.starts_at,
+      kind = EXCLUDED.kind, kanji_options = EXCLUDED.kanji_options,
       interval_hours = EXCLUDED.interval_hours, videos_per_run = EXCLUDED.videos_per_run,
       revision = video_creator_schedule.revision + 1,
       last_scheduled_at = CASE WHEN
@@ -221,13 +251,14 @@ export async function updatePipelineSchedule(input: {
     RETURNING ${scheduleColumns}`,
     [input.enabled, runTime, timezone, input.forceRecreate, input.publishToFacebook,
       Boolean(youtube), youtube?.privacy ?? "private", youtube?.madeForKids ?? null, youtube?.containsSyntheticMedia ?? null,
-      mode, interval?.startsAt ?? null, interval?.intervalHours ?? 5, interval?.videosPerRun ?? 1, scheduleId(mode)]);
+      mode, interval?.startsAt ?? null, interval?.intervalHours ?? 5, interval?.videosPerRun ?? 1, scheduleId(mode, kind),
+      kind, JSON.stringify(kanji)]);
   if (!result.rows[0]) throw new Error("Start time does not exist in the selected timezone (daylight-saving change).");
   return mapSchedule(result.rows[0]);
 }
 
-export async function deletePipelineSchedule(mode: PipelineSchedule["mode"] = "daily") {
-  const id = scheduleId(mode);
+export async function deletePipelineSchedule(mode: PipelineSchedule["mode"] = "daily", kind: PipelineSchedule["kind"] = "grammar") {
+  const id = scheduleId(mode, kind);
   await ensureVideoCreatorSchema();
   await query(`DELETE FROM video_creator_schedule WHERE id = $1`, [id]);
 }
@@ -246,7 +277,7 @@ type Job = {
   schedule_id: number;
   schedule_revision: string;
   scheduled_for: string;
-  settings: Parameters<typeof startGeneration>[0];
+  settings: Parameters<typeof startGeneration>[0] & { kind?: PipelineSchedule["kind"]; kanjiOptions?: PipelineSchedule["kanjiOptions"] };
 };
 
 async function prepareSchedule(schedule: PipelineSchedule, now: Date) {
@@ -277,6 +308,8 @@ async function prepareSchedule(schedule: PipelineSchedule, now: Date) {
     : local.time >= schedule.runTime && schedule.lastRunDate !== local.date ? now.toISOString() : null;
   if (!due) return;
   const settings = {
+    kind: schedule.kind,
+    kanjiOptions: schedule.kanjiOptions,
     forceRecreate: schedule.forceRecreate,
     publishToFacebook: schedule.publishToFacebook,
     youtube: schedule.publishToYouTube ? validateYouTubePublishSettings({
@@ -322,7 +355,7 @@ export async function tickSchedule(now = new Date()) {
           WHERE id = $2 AND revision = $3::bigint`, [message.slice(0, 4000), row.id, row.revision]).catch(() => {});
       }
     }
-    // Global worker/upload barrier is checked AFTER preparing both queues.
+    // Global worker/upload barrier is checked AFTER preparing all queues.
     const busy = await query(`SELECT 1 FROM video_creator_runs
       WHERE status = 'running' OR after_run_pending OR after_run_publish IS NOT NULL LIMIT 1`);
     if (busy.rows.length) return;
@@ -337,8 +370,10 @@ export async function tickSchedule(now = new Date()) {
     const job = pending.rows[0];
     if (!job) return;
     try {
-      // Unique job ID is stored before spawning Python; restart cannot replay it.
-      const run = await startGeneration({ ...job.settings, scheduleJobId: job.id });
+      // Unique job ID is stored before starting generation; restart cannot replay it.
+      const run = job.settings.kind === "kanji"
+        ? await startKanjiGeneration({ ...job.settings, scheduleJobId: job.id })
+        : await startGeneration({ ...job.settings, scheduleJobId: job.id });
       await query(`UPDATE video_creator_schedule SET last_run_id = $1, updated_at = NOW()
         WHERE id = $3 AND revision = $2::bigint`, [run.id, job.schedule_revision, job.schedule_id]);
     } catch (error) {

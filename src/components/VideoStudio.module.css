@@ -9,7 +9,7 @@
 .modalHeader > button { width:32px; height:32px; border:1px solid #3a5477; border-radius:7px; color:#dcecff; background:#102944; font-size:20px; line-height:1; cursor:pointer; }
 .libraryGrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(165px,1fr)); gap:12px; }
 .libraryCard { display:grid; gap:7px; min-width:0; padding:10px; border:1px solid #29425f; border-radius:10px; background:#102944; }
-.libraryCard img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:7px; background:#000; }
+.libraryCard img,.libraryCard video { width:100%; aspect-ratio:1; object-fit:cover; border-radius:7px; background:#000; }
 .libraryCard audio { width:100%; height:34px; margin:20px 0; }
 .libraryCard strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:12px; }
 .libraryCard small { color:#8fa4c2; font-size:11px; }

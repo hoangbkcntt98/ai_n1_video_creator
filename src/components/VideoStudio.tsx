@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import styles from "./VideoStudio.module.css";
+import type { VideoRecord } from "@/lib/video";
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
 const voices = [
@@ -15,6 +16,7 @@ const voices = [
 type AudioSlot = { file: File | null; libraryPath: string; name: string; ttsText: string; voice: string; ttsPath: string; ttsUrl: string };
 type ImageItem = { file: File | null; path: string; name: string; size: number };
 type LibraryAsset = { path: string; name: string; size: number };
+type VideoItem = { file: File | null; path: string; name: string; size: number };
 const emptyAudioSlot = (): AudioSlot => ({ file: null, libraryPath: "", name: "", ttsText: "", voice: "ja-JP-NanamiNeural", ttsPath: "", ttsUrl: "" });
 
 function videoUrl(relativePath: string) {
@@ -29,12 +31,15 @@ function assetUrl(relativePath: string) {
 export default function VideoStudio() {
   const router = useRouter();
   const imageInput = useRef<HTMLInputElement>(null);
+  const videoInput = useRef<HTMLInputElement>(null);
   const audioInput = useRef<HTMLInputElement>(null);
   const [images, setImages] = useState<ImageItem[]>([]);
+  const [videos, setVideos] = useState<VideoItem[]>([]);
   const [audioSlots, setAudioSlots] = useState<AudioSlot[]>(() => Array.from({ length: 10 }, emptyAudioSlot));
   const [libraryImages, setLibraryImages] = useState<LibraryAsset[]>([]);
   const [libraryAudio, setLibraryAudio] = useState<LibraryAsset[]>([]);
-  const [libraryPicker, setLibraryPicker] = useState<"images" | "audio" | null>(null);
+  const [libraryVideos, setLibraryVideos] = useState<VideoRecord[]>([]);
+  const [libraryPicker, setLibraryPicker] = useState<"images" | "audio" | "videos" | null>(null);
   const [activeAudioSlot, setActiveAudioSlot] = useState(0);
   const [activeTtsSlot, setActiveTtsSlot] = useState<number | null>(null);
   const [title, setTitle] = useState("");
@@ -48,9 +53,10 @@ export default function VideoStudio() {
   const [resultPath, setResultPath] = useState("");
 
   useEffect(() => {
-    fetch(`${basePath}/api/studio/library`).then((response) => response.ok ? response.json() : Promise.reject(new Error("Could not read library."))).then((body: { images?: LibraryAsset[]; audio?: LibraryAsset[] }) => {
+    fetch(`${basePath}/api/studio/library`).then((response) => response.ok ? response.json() : Promise.reject(new Error("Could not read library."))).then((body: { images?: LibraryAsset[]; audio?: LibraryAsset[]; videos?: VideoRecord[] }) => {
       setLibraryImages(body.images || []);
       setLibraryAudio(body.audio || []);
+      setLibraryVideos(body.videos || []);
     }).catch(() => undefined);
   }, []);
   const totalSize = useMemo(() => images.reduce((sum, file) => sum + file.size, 0), [images]);
@@ -59,6 +65,20 @@ export default function VideoStudio() {
     setImages((current) => [...current, ...selected.map((file) => ({ file, path: "", name: file.name, size: file.size }))].slice(0, 24));
     setImageDurations((current) => [...current, ...selected.map(() => 4)].slice(0, 24));
     event.target.value = "";
+  }
+  function selectVideos(event: React.ChangeEvent<HTMLInputElement>) {
+    const selected = Array.from(event.target.files || []).slice(0, Math.max(0, 20 - videos.length));
+    setVideos((current) => [...current, ...selected.map((file) => ({ file, path: "", name: file.name, size: file.size }))].slice(0, 20));
+    event.target.value = "";
+  }
+  function addLibraryVideo(relativePath: string) {
+    const video = libraryVideos.find((item) => item.relativePath === relativePath);
+    if (!video || videos.length >= 20) return;
+    setVideos((current) => [...current, { file: null, path: video.relativePath, name: video.title || video.relativePath.split("/").pop() || "video.mp4", size: video.size }]);
+    setLibraryPicker(null);
+  }
+  function removeVideo(index: number) {
+    setVideos((current) => current.filter((_, itemIndex) => itemIndex !== index));
   }
   function addLibraryImage(path: string) {
     const asset = libraryImages.find((item) => item.path === path);
@@ -130,21 +150,29 @@ export default function VideoStudio() {
 
   async function renderVideo() {
     setError(""); setMessage(""); setResultPath("");
-    if (!images.length) { setError("Choose at least one image."); return; }
+    if (images.length && videos.length) { setError("Chỉ chọn ảnh hoặc video, không chọn cả hai."); return; }
+    if (!images.length && !videos.length) { setError("Chọn ít nhất một ảnh hoặc video."); return; }
     setBusy("render");
     try {
       const form = new FormData();
-      images.forEach((image, index) => {
-        if (image.file) form.append(`image_${index}`, image.file);
-        else form.set(`imageLibraryPath_${index}`, image.path);
-        form.set(`imageName_${index}`, image.name.trim());
-      });
-      audioSlots.forEach((slot, index) => {
-        if (slot.file) form.append(`audio_${index}`, slot.file);
-        else if (slot.libraryPath) form.set(`audioLibraryPath_${index}`, slot.libraryPath);
-        else if (slot.ttsPath) form.set(`ttsAudioPath_${index}`, slot.ttsPath);
-        if (slot.name.trim()) form.set(`audioName_${index}`, slot.name.trim());
-      });
+      if (videos.length) {
+        videos.forEach((video, index) => {
+          if (video.file) form.append(`video_${index}`, video.file);
+          else form.set(`videoLibraryPath_${index}`, video.path);
+        });
+      } else {
+        images.forEach((image, index) => {
+          if (image.file) form.append(`image_${index}`, image.file);
+          else form.set(`imageLibraryPath_${index}`, image.path);
+          form.set(`imageName_${index}`, image.name.trim());
+        });
+        audioSlots.forEach((slot, index) => {
+          if (slot.file) form.append(`audio_${index}`, slot.file);
+          else if (slot.libraryPath) form.set(`audioLibraryPath_${index}`, slot.libraryPath);
+          else if (slot.ttsPath) form.set(`ttsAudioPath_${index}`, slot.ttsPath);
+          if (slot.name.trim()) form.set(`audioName_${index}`, slot.name.trim());
+        });
+      }
       form.set("title", title); form.set("caption", caption); form.set("imageDurations", JSON.stringify(imageDurations));
       const response = await fetch(`${basePath}/api/studio/render`, { method: "POST", body: form });
       const body = await response.json() as { error?: string; path?: string };
@@ -155,6 +183,12 @@ export default function VideoStudio() {
   }
 
   return <div className={styles.layout}>
+    <section className={`${styles.panel} ${styles.details}`}>
+      <div className={styles.panelTitle}><div><p className="eyebrow">VIDEO JOIN</p><h2>Nối video có sẵn</h2></div><span>{videos.length}/20 video</span></div>
+      <div className={styles.libraryPickers}><button type="button" className="primary" onClick={() => videoInput.current?.click()} disabled={busy !== null || busyImage}>+ Upload Videos</button><button type="button" onClick={() => setLibraryPicker("videos")} disabled={busy !== null || busyImage || videos.length >= 20}>+ Chọn từ Video Library</button></div>
+      <input ref={videoInput} hidden type="file" accept="video/mp4,video/quicktime,video/webm,video/x-matroska,video/x-msvideo" multiple onChange={selectVideos} />
+      {videos.length ? <div className={styles.fileList}>{videos.map((video, index) => <div className={styles.fileRow} key={`${video.path || video.name}-${index}`}><span className={styles.index}>{index + 1}</span><span className={styles.fileInfo}><strong className={styles.fileName}>{video.name}</strong><small>{video.path ? "From Video Library" : "New Upload"}</small></span><small>{(video.size / 1024 / 1024).toFixed(1)} MB</small><button type="button" onClick={() => removeVideo(index)} disabled={busy !== null}>×</button></div>)}</div> : <p className={styles.hint}>Chọn nhiều video để nối theo thứ tự. Không dùng chung với ảnh.</p>}
+    </section>
     <section className={styles.panel}>
       <div className={styles.panelTitle}><div><p className="eyebrow">1 · IMAGES</p><h2>Choose Images for Scenes</h2></div><span>{images.length}/24 images</span></div>
       <div className={styles.libraryPickers}><button type="button" className="primary" onClick={() => imageInput.current?.click()} disabled={busy !== null || busyImage}>+ Upload Images</button><button type="button" onClick={() => setLibraryPicker("images")} disabled={busy !== null || busyImage || images.length >= 24}>+ Choose Image from Library</button></div>
@@ -185,10 +219,10 @@ export default function VideoStudio() {
       <div className={styles.panelTitle}><div><p className="eyebrow">3 · VIDEO EXPORT</p><h2>Video Details</h2></div></div>
       <label className={styles.field}>Title (optional)<input type="text" maxLength={300} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Video Studio" /></label>
       <label className={styles.field}>Facebook Caption (optional)<textarea rows={5} maxLength={5000} value={caption} onChange={(event) => setCaption(event.target.value)} placeholder="You can edit the caption before publishing in Video Library." /></label>
-      <button type="button" className="primary" onClick={() => void renderVideo()} disabled={busy !== null || !images.length}>{busy === "render" ? "Rendering video..." : "Create MP4 Video"}</button>
+      <button type="button" className="primary" onClick={() => void renderVideo()} disabled={busy !== null || (!images.length && !videos.length)}>{busy === "render" ? "Rendering video..." : videos.length ? "Join MP4 Videos" : "Create MP4 Video"}</button>
       {message ? <p className={styles.success} role="status">{message}</p> : null}{error ? <p className={styles.error} role="alert">{error}</p> : null}
       {resultPath ? <div className={styles.result}><video controls src={videoUrl(resultPath)} /><a href={videoUrl(resultPath)} target="_blank" rel="noreferrer">Open Created Video</a><small>{resultPath}</small></div> : null}
     </section>
-    {libraryPicker ? <div className={styles.modalBackdrop} role="presentation" onMouseDown={() => setLibraryPicker(null)}><div className={styles.libraryModal} role="dialog" aria-modal="true" aria-labelledby="library-picker-title" onMouseDown={(event) => event.stopPropagation()}><div className={styles.modalHeader}><div><p className="eyebrow">LIBRARY</p><h2 id="library-picker-title">{libraryPicker === "images" ? "Choose Image from Library" : "Choose Audio from Library"}</h2></div><button type="button" onClick={() => setLibraryPicker(null)} aria-label="Close">×</button></div>{(libraryPicker === "images" ? libraryImages : libraryAudio).length ? <div className={styles.libraryGrid}>{(libraryPicker === "images" ? libraryImages : libraryAudio).map((asset) => <article className={styles.libraryCard} key={asset.path}>{libraryPicker === "images" ? <img src={assetUrl(asset.path)} alt={asset.name} loading="lazy" /> : <audio controls preload="metadata" src={assetUrl(asset.path)} />}<strong title={asset.name}>{asset.name}</strong><small>{(asset.size / 1024 / 1024).toFixed(1)} MB</small><button type="button" className="primary" onClick={() => libraryPicker === "images" ? addLibraryImage(asset.path) : chooseLibraryAudio(asset.path)}>Select</button></article>)}</div> : <p className={styles.hint}>Library has no {libraryPicker === "images" ? "images" : "audio"}.</p>}</div></div> : null}
+    {libraryPicker ? <div className={styles.modalBackdrop} role="presentation" onMouseDown={() => setLibraryPicker(null)}><div className={styles.libraryModal} role="dialog" aria-modal="true" aria-labelledby="library-picker-title" onMouseDown={(event) => event.stopPropagation()}><div className={styles.modalHeader}><div><p className="eyebrow">LIBRARY</p><h2 id="library-picker-title">{libraryPicker === "images" ? "Choose Image from Library" : libraryPicker === "audio" ? "Choose Audio from Library" : "Choose Video from Library"}</h2></div><button type="button" onClick={() => setLibraryPicker(null)} aria-label="Close">×</button></div>{(libraryPicker === "images" ? libraryImages : libraryPicker === "audio" ? libraryAudio : libraryVideos).length ? <div className={styles.libraryGrid}>{(libraryPicker === "images" ? libraryImages : libraryPicker === "audio" ? libraryAudio : libraryVideos).map((asset) => <article className={styles.libraryCard} key={"path" in asset ? asset.path : asset.relativePath}>{libraryPicker === "images" ? <img src={assetUrl((asset as LibraryAsset).path)} alt={(asset as LibraryAsset).name} loading="lazy" /> : libraryPicker === "audio" ? <audio controls preload="metadata" src={assetUrl((asset as LibraryAsset).path)} /> : <video controls preload="metadata" src={videoUrl((asset as VideoRecord).relativePath)} />}{libraryPicker === "videos" ? <strong title={(asset as VideoRecord).title}>{(asset as VideoRecord).title || (asset as VideoRecord).relativePath}</strong> : <strong title={(asset as LibraryAsset).name}>{(asset as LibraryAsset).name}</strong>}<small>{((asset as LibraryAsset | VideoRecord).size / 1024 / 1024).toFixed(1)} MB</small><button type="button" className="primary" onClick={() => libraryPicker === "images" ? addLibraryImage((asset as LibraryAsset).path) : libraryPicker === "audio" ? chooseLibraryAudio((asset as LibraryAsset).path) : addLibraryVideo((asset as VideoRecord).relativePath)}>Select</button></article>)}</div> : <p className={styles.hint}>Library has no {libraryPicker === "images" ? "images" : libraryPicker === "audio" ? "audio" : "videos"}.</p>}</div></div> : null}
   </div>;
 }
