@@ -141,7 +141,7 @@ async function renderHtmlVideo(htmlPath: string, source: string, durationSeconds
   return { videoPath, fps: rendered.fps };
 }
 
-async function renderHtmlVideoWithQuiz(htmlPath: string, source: string, durationSeconds: number, fps: number, autoFps: boolean, log: WordCreatorLogger, quizData: Record<string, string>) {
+async function renderHtmlVideoWithQuiz(htmlPath: string, source: string, durationSeconds: number, fps: number, autoFps: boolean, log: WordCreatorLogger, quizData: Record<string, string | number>) {
   const jsonPath = htmlPath.replace(/\.html$/i, ".json");
   await fs.writeFile(jsonPath, JSON.stringify(quizData), "utf8");
   try {
@@ -494,14 +494,15 @@ export async function markWordCreatorStatus(source: string, vocabulary: string, 
   );
 }
 
-export function fillQuizTemplate(template: string, vocabulary: string, answers: string[]) {
+export function fillQuizTemplate(template: string, vocabulary: string, answers: string[], correctIndex?: number) {
   const data: Record<string, string> = { Word: vocabulary };
   answers.forEach((answer, index) => { data[`Answer${"ABCD"[index]}`] = answer; });
   let html = template;
   for (const [key, value] of Object.entries(data)) html = html.replaceAll(`{{${key}}}`, safeHtml(value));
   // New templates expose setQuiz instead of placeholders. Keep both formats.
   const json = JSON.stringify(data).replaceAll("<", "\\u003c").replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
-  const script = `<script>document.addEventListener("DOMContentLoaded",function(){if(typeof window.setQuiz==="function")window.setQuiz(${json});});</script>`;
+  const correctIndexJson = JSON.stringify(correctIndex ?? -1);
+  const script = `<script>document.addEventListener("DOMContentLoaded",function(){if(typeof window.setQuiz==="function")window.setQuiz(${json});if(typeof window.quizCorrectIndex==="undefined")window.quizCorrectIndex=${correctIndexJson};});</script>`;
   return /<\/body>/i.test(html) ? html.replace(/<\/body>/i, () => `${script}</body>`) : `${html}${script}`;
 }
 
@@ -547,19 +548,19 @@ export async function generateWordCreator(
       await log(`Gọi AI tạo đáp án cho ${vocabulary}.`, "info", row.source);
       const generated = await createAnswers(row.source, vocabulary);
       await log("Đã tạo và trộn đáp án. Đang ghi HTML và sao chép ảnh/GIF.", "info", row.source);
-      const html = fillQuizTemplate(template, vocabulary, generated.answers);
+      const html = fillQuizTemplate(template, vocabulary, generated.answers, generated.correctIndex);
       const fileName = `${safeFileName(row.source)}.html`;
       const filePath = path.join(outputDir, fileName);
       await fs.writeFile(filePath, html, "utf8");
       await copyHtmlAssets(html, filePath);
       await log(`Phân tích GIF và render ${durationSeconds}s, FPS yêu cầu ${fps}${autoFps ? " (tự động khớp GIF)" : " (cố định)"}.`, "info", row.source);
-      const quizData: Record<string, string> = { Word: vocabulary, AnswerA: generated.answers[0], AnswerB: generated.answers[1], AnswerC: generated.answers[2], AnswerD: generated.answers[3] };
+      const quizData: Record<string, string | number> = { Word: vocabulary, AnswerA: generated.answers[0], AnswerB: generated.answers[1], AnswerC: generated.answers[2], AnswerD: generated.answers[3], correctIndex: generated.correctIndex };
       const rendered = await renderHtmlVideoWithQuiz(filePath, row.source, durationSeconds, fps, autoFps, log, quizData);
       await log("Render xong; frame tạm đã được xóa. Đang lưu video vào DB.", "info", row.source);
       const relativeVideoPath = toRelativeOutputPath(rendered.videoPath);
       await saveVideoDetails(relativeVideoPath, {
-        title: `${row.source} ${vocabulary}`,
-        caption: `WordCreator: ${vocabulary}`,
+        title: vocabulary,
+        caption: `${vocabulary} #kanji #jlpt #n1 #japanese #日本語 #漢字`,
       });
       await query(
         `INSERT INTO word_creator_questions

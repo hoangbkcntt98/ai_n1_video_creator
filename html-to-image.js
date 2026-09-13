@@ -78,6 +78,7 @@ async function main() {
   const htmlPath = path.resolve(option("--html", htmlFallback));
   const videoPath = path.resolve(option("--output", outputFallback));
   const duration = Number(option("--duration", durationFallback));
+  const highlightDuration = 2; // 2 seconds to show correct answer
   const requestedFps = Number(option("--fps", fpsFallback));
   const autoFps = !process.argv.includes("--fixed-fps");
   let fps = requestedFps;
@@ -123,7 +124,10 @@ async function main() {
 
     if (dataPath) {
       const data = JSON.parse(fs.readFileSync(path.resolve(dataPath), "utf8"));
-      await page.evaluate((quiz) => window.setQuiz?.(quiz), data);
+      await page.evaluate((quiz) => {
+        window.setQuiz?.(quiz);
+        if (typeof quiz.correctIndex === "number") window.quizCorrectIndex = quiz.correctIndex;
+      }, data);
     }
     await page.evaluate(() => window.fitText?.());
 
@@ -174,18 +178,25 @@ async function main() {
     }
     const selection = autoFps ? chooseFps(requestedFps, delays) : { fps: requestedFps, exact: false };
     fps = selection.fps;
-    frameCount = Math.max(1, Math.ceil(duration * fps));
+    const totalDuration = duration + highlightDuration;
+    frameCount = Math.max(1, Math.ceil(totalDuration * fps));
     console.log(`FPS yêu cầu: ${requestedFps}; FPS thực tế: ${fps}; ${overlays.length} GIF; ${frameCount} frame.${autoFps && !selection.exact ? " Giới hạn 60 FPS: một số mốc GIF sẽ được lấy mẫu gần nhất." : ""}`);
     for (let index = 0; index < frameCount; index += 1) {
-      await page.evaluate(({ time, total }) => {
+      const time = index / fps;
+      const isHighlightPhase = time >= duration;
+      await page.evaluate(({ time, total, isHighlight }) => {
         for (const animation of document.getAnimations()) {
           animation.pause();
           animation.currentTime = time * 1000;
         }
-        window.renderFrame?.(time, total);
+        window.renderFrame?.(Math.min(time, total), total);
+        if (isHighlight && typeof window.setCorrectAnswer === "function" && typeof window.quizCorrectIndex === "number") {
+          window.setCorrectAnswer(window.quizCorrectIndex);
+        }
       }, {
-        time: index / fps,
+        time,
         total: duration,
+        isHighlight: isHighlightPhase,
       });
       await reel.screenshot({
         path: path.join(frameDir, `frame-${String(index).padStart(6, "0")}.png`),
@@ -221,7 +232,7 @@ async function main() {
       "-movflags",
       "+faststart",
       "-t",
-      duration.toFixed(3),
+      (duration + highlightDuration).toFixed(3),
       videoPath,
     ], { maxBuffer: 12 * 1024 * 1024 });
   } finally {
@@ -230,7 +241,7 @@ async function main() {
   }
 
   console.log(`Đã tạo video ${videoPath} từ ${frameCount} frame; đã xóa frame tạm.`);
-  console.log(`WORD_CREATOR_RESULT=${JSON.stringify({ fps, frameCount, duration, videoPath })}`);
+  console.log(`WORD_CREATOR_RESULT=${JSON.stringify({ fps, frameCount, duration, highlightDuration, totalDuration: duration + highlightDuration, videoPath })}`);
 }
 
 module.exports = { chooseFps, gifDelays, overlayArguments };

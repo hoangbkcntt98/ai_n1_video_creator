@@ -407,10 +407,6 @@
             window.fitText();
         };
         window.renderFrame = function (time = 0, duration = 5) {
-            const remaining = Math.max(0, duration - time);
-            document.querySelector('.seconds').textContent = Math.ceil(remaining);
-            document.querySelector('.progress').style.strokeDashoffset = 289.027 * (1 - remaining / duration);
-        };
         window.setCorrectAnswer = function (correctIndex) {
             const answers = document.querySelectorAll('.answer');
             answers.forEach((answer, i) => {
@@ -424,6 +420,10 @@
                     answer.style.borderWidth = '.25cqw';
                 }
             });
+        };
+            const remaining = Math.max(0, duration - time);
+            document.querySelector('.seconds').textContent = Math.ceil(remaining);
+            document.querySelector('.progress').style.strokeDashoffset = 289.027 * (1 - remaining / duration);
         };
         document.fonts.ready.then(window.fitText);
         new ResizeObserver(window.fitText).observe(document.querySelector('#reel'));
