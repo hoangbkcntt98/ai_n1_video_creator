@@ -155,11 +155,11 @@ export default function WordCreator() {
       <div className={styles.fields}>
         <label>Tìm Kanji / từ vựng<input value={sourceSearch} onChange={(event) => { setSourceSearch(event.target.value); setSourceOffset(0); }} placeholder="遭, 遭う..." disabled={busy} /></label>
         <label>Chọn Kanji<select value={source} onChange={(event) => setSource(event.target.value)} disabled={busy || sourcesLoading}>
-          <option value="">Tự động chọn theo số record</option>
+          <option value="">Tự động chọn</option>
           {source && !sources.some((item) => item.source === source) ? <option value={source}>{source} (đã chọn)</option> : null}
-          {sources.map((item) => <option key={item.source} value={item.source}>{item.source} · {item.vocabulary} ({item.note_count} record)</option>)}
+          {sources.map((item) => <option key={item.source} value={item.source}>{item.source} · {item.vocabulary} {item.status ? `(${item.status})` : ""}</option>)}
         </select></label>
-        <label>Số record<input type="number" min="1" max="500" value={limit} onChange={(event) => setLimit(event.target.value)} disabled={busy} /></label>
+        
         <label>Thời lượng video (giây)<input type="number" min="1" max="300" step="1" value={durationSeconds} onChange={(event) => setDurationSeconds(event.target.value)} disabled={busy} /></label>
         <label>FPS<input type="number" min="1" max="60" step="1" value={fps} onChange={(event) => setFps(event.target.value)} disabled={busy} /></label>
         <label>Tự động khớp FPS theo GIF<input type="checkbox" checked={autoFps} onChange={(event) => setAutoFps(event.target.checked)} disabled={busy} /></label>

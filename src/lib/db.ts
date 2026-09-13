@@ -176,6 +176,11 @@ export async function ensureWordCreatorSchema() {
     ADD COLUMN IF NOT EXISTS duration_seconds NUMERIC,
     ADD COLUMN IF NOT EXISTS fps SMALLINT NOT NULL DEFAULT 30 CHECK (fps BETWEEN 1 AND 60)`);
   await query("ALTER TABLE word_creator_questions ALTER COLUMN fps SET DEFAULT 25");
+  await query(`ALTER TABLE word_creator_questions
+    ADD COLUMN IF NOT EXISTS status TEXT,
+    ADD COLUMN IF NOT EXISTS last_error TEXT`);
+  await query(`CREATE INDEX IF NOT EXISTS word_creator_questions_status_idx
+    ON word_creator_questions (status, updated_at DESC)`);
 }
 
 export function processAlive(pid: number) {

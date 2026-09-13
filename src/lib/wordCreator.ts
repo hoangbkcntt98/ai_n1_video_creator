@@ -3,7 +3,7 @@ import { randomInt } from "node:crypto";
 import path from "node:path";
 import { Pool } from "pg";
 import { appConfig, toRelativeOutputPath } from "@/lib/config";
-import { ensureWordCreatorSchema, query } from "@/lib/db";
+import { db, ensureWordCreatorSchema, query } from "@/lib/db";
 import { runCommand } from "@/lib/studio";
 import { saveVideoDetails } from "@/lib/video";
 
@@ -47,7 +47,7 @@ export type WordCreatorOptions = {
   scheduled?: boolean; forceRecreate?: boolean; pipelineRunId?: number;
 };
 export type WordCreatorLogger = (message: string, level?: "info" | "error", source?: string) => Promise<void>;
-export type WordCreatorSource = { source: string; vocabulary: string; note_count: number };
+export type WordCreatorSource = { source: string; vocabulary: string; note_count: number; status: string };
 export type WordCreatorProgress = {
   total: number;
   processed: number;
@@ -466,18 +466,31 @@ async function readAnkiNotes(source?: string, limit = 100, scheduled = false, fo
 }
 
 export async function listWordCreatorSources(search = "", offset = 0) {
+  await ensureWordCreatorSchema();
   if (!Number.isSafeInteger(offset) || offset < 0) throw new Error("offset không hợp lệ.");
   const pattern = `%${search.trim().slice(0, 100).replace(/[\\%_]/g, "\\$&")}%`;
-  const result = await getAnkiPool().query<WordCreatorSource>(
-    `SELECT source, MIN(fields_json->>'RequiredVocabulary') AS vocabulary, COUNT(*)::integer AS note_count
-     FROM public.anki_ai_notes
-     WHERE note_type = 'AIKanjiWithImage'
-       AND NULLIF(BTRIM(source), '') IS NOT NULL
-       AND NULLIF(BTRIM(fields_json->>'RequiredVocabulary'), '') IS NOT NULL
-       AND (source ILIKE $1 OR fields_json->>'RequiredVocabulary' ILIKE $1)
-     GROUP BY source ORDER BY source LIMIT 101 OFFSET $2`, [pattern, offset],
+  const ankiDb = appConfig.ankiDatabaseUrl();
+  // If anki uses same database, can join directly. Otherwise need separate queries.
+  const result = await (ankiDb ? getAnkiPool() : db()).query<WordCreatorSource>(
+    `SELECT a.source, MIN(a.fields_json->>'RequiredVocabulary') AS vocabulary, COUNT(*)::integer AS note_count
+     FROM public.anki_ai_notes a
+     WHERE a.note_type = 'AIKanjiWithImage'
+       AND NULLIF(BTRIM(a.source), '') IS NOT NULL
+       AND NULLIF(BTRIM(a.fields_json->>'RequiredVocabulary'), '') IS NOT NULL
+       AND (a.source ILIKE $1 OR a.fields_json->>'RequiredVocabulary' ILIKE $1)
+     GROUP BY a.source ORDER BY a.source LIMIT 101 OFFSET $2`, [pattern, offset],
   );
-  return { sources: result.rows.slice(0, 100), hasMore: result.rows.length > 100 };
+  // Fetch statuses separately from main DB
+  const sources = result.rows.slice(0, 100);
+  if (sources.length > 0) {
+    const statusRows = await query<{ source: string; status: string }>(
+      `SELECT source, status FROM word_creator_questions WHERE source = ANY($1::text[])`,
+      [sources.map(s => s.source)]
+    );
+    const statusMap = new Map(statusRows.rows.map(r => [r.source, r.status]));
+    for (const s of sources) s.status = statusMap.get(s.source) || '';
+  }
+  return { sources, hasMore: result.rows.length > 100 };
 }
 
 function requiredVocabulary(row: AnkiNote) {
