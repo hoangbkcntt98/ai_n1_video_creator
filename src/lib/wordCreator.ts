@@ -184,21 +184,190 @@ function randomizeCorrectAnswer(answers: string[], correctIndex: number) {
   return { answers, correctIndex: targetIndex };
 }
 
+type LlmChatPayload = {
+  choices?: Array<{
+    message?: { content?: unknown };
+    delta?: { content?: unknown };
+    text?: unknown;
+  }>;
+  error?: { message?: unknown };
+};
+
+function payloadContent(payload: LlmChatPayload): string | null {
+  const content = payload.choices?.[0]?.message?.content;
+  return typeof content === "string" ? content : null;
+}
+
+function ssePayloadFromEvents(events: string[]): LlmChatPayload {
+  let completePayload: LlmChatPayload | undefined;
+  let streamedContent = "";
+  let streamedText = "";
+  let lastPayload: LlmChatPayload | undefined;
+
+  for (const event of events) {
+    const trimmed = event.trim();
+    if (!trimmed || trimmed === "[DONE]") continue;
+
+    let parsed: LlmChatPayload;
+    try {
+      parsed = JSON.parse(trimmed) as LlmChatPayload;
+    } catch {
+      // Some providers may emit non-JSON bookkeeping events.
+      // Ignore those here; a useful JSON event or delta must still exist below.
+      continue;
+    }
+
+    lastPayload = parsed;
+
+    const errorMessage = parsed.error?.message;
+    if (typeof errorMessage === "string" && errorMessage.trim()) {
+      throw new Error(`LLM: ${errorMessage.trim()}`);
+    }
+
+    const messageContent = parsed.choices?.[0]?.message?.content;
+    if (typeof messageContent === "string") {
+      completePayload = parsed;
+    }
+
+    const deltaContent = parsed.choices?.[0]?.delta?.content;
+    if (typeof deltaContent === "string") {
+      streamedContent += deltaContent;
+    }
+
+    const textContent = parsed.choices?.[0]?.text;
+    if (typeof textContent === "string") {
+      streamedText += textContent;
+    }
+  }
+
+  if (completePayload && payloadContent(completePayload)) {
+    return completePayload;
+  }
+
+  const content = streamedContent || streamedText;
+  if (content) {
+    return {
+      choices: [{ message: { content } }],
+    };
+  }
+
+  if (lastPayload) return lastPayload;
+
+  throw new Error("LLM trả về stream nhưng không có dữ liệu JSON hợp lệ.");
+}
+
+async function readLlmResponse(response: Response): Promise<LlmChatPayload> {
+  const contentType = (response.headers.get("content-type") || "").toLowerCase();
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => "");
+    throw new Error(`LLM HTTP ${response.status}: ${errorText.slice(-500)}`);
+  }
+
+  if (!contentType.includes("text/event-stream")) {
+    const body = await response.text();
+    try {
+      return JSON.parse(body) as LlmChatPayload;
+    } catch {
+      throw new Error(
+        `LLM trả về dữ liệu không phải JSON: ${contentType || "unknown"}: ${body.slice(0, 300)}`,
+      );
+    }
+  }
+
+  if (!response.body) {
+    throw new Error("Không thể đọc stream từ LLM.");
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const events: string[] = [];
+  let pending = "";
+  let eventData: string[] = [];
+
+  const flushLine = (rawLine: string) => {
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+
+    // Blank line terminates one SSE event.
+    if (line === "") {
+      if (eventData.length) {
+        events.push(eventData.join("\n"));
+        eventData = [];
+      }
+      return;
+    }
+
+    // SSE comments / keep-alive.
+    if (line.startsWith(":")) return;
+
+    if (line.startsWith("data:")) {
+      eventData.push(line.slice(5).trimStart());
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (value) {
+      // stream:true is important so UTF-8 characters split across chunks survive.
+      pending += decoder.decode(value, { stream: true });
+
+      let newlineIndex: number;
+      while ((newlineIndex = pending.indexOf("\n")) >= 0) {
+        const line = pending.slice(0, newlineIndex);
+        pending = pending.slice(newlineIndex + 1);
+        flushLine(line);
+      }
+    }
+
+    if (done) break;
+  }
+
+  pending += decoder.decode();
+
+  if (pending) {
+    flushLine(pending);
+  }
+  if (eventData.length) {
+    events.push(eventData.join("\n"));
+  }
+
+  return ssePayloadFromEvents(events);
+}
+
 async function createAnswers(source: string, requiredVocabulary: string) {
   const baseUrl = process.env.LLM_BASE_URL?.trim();
   const apiKey = process.env.LLM_API_KEY?.trim();
   const model = process.env.LLM_MODEL?.trim();
-  if (!baseUrl || !apiKey || !model) throw new Error("Thiếu LLM_BASE_URL, LLM_API_KEY hoặc LLM_MODEL.");
+
+  if (!baseUrl || !apiKey || !model) {
+    throw new Error("Thiếu LLM_BASE_URL, LLM_API_KEY hoặc LLM_MODEL.");
+  }
+
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Number(process.env.LLM_TIMEOUT || 120) * 1000);
+  const timeoutSeconds = Number(process.env.LLM_TIMEOUT || 120);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    (Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? timeoutSeconds : 120) * 1000,
+  );
+
   try {
     const requestBody = JSON.stringify({
       model,
       temperature: Number(process.env.LLM_TEMPERATURE || 0.7),
       max_tokens: Number(process.env.LLM_MAX_TOKENS || 1000),
+
+      // Yêu cầu provider trả response JSON thường.
+      // Một số OpenAI-compatible proxy vẫn có thể ép SSE, nên readLlmResponse()
+      // phía trên vẫn hỗ trợ text/event-stream đầy đủ.
+      stream: false,
+
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: "You create Japanese multiple-choice reading questions. Return JSON only." },
+        {
+          role: "system",
+          content: "You create Japanese multiple-choice reading questions. Return JSON only.",
+        },
         {
           role: "user",
           content: [
@@ -211,53 +380,54 @@ async function createAnswers(source: string, requiredVocabulary: string) {
         },
       ],
     });
-    let payload: { choices?: Array<{ message?: { content?: unknown } }> } | undefined;
-    let lastNonJson = "";
-    for (let attempt = 0; attempt < 2 && !payload; attempt += 1) {
-      const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/chat/completions`, {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-        body: requestBody,
-        signal: controller.signal,
-      });
-      const contentType = response.headers.get("content-type") || "";
-      let body: string;
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`LLM HTTP ${response.status}: ${errorText.slice(-500)}`);
-      }
-      if (contentType.includes("text/event-stream")) {
-        let buffer = "";
-        let data = "";
-        const reader = response.body?.getReader();
-        if (!reader) throw new Error("Không thể đọc stream từ LLM.");
-        const decoder = new TextDecoder();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (value) {
-           for (const line of decoder.decode(value).split("\\n")) {
-              if (line.startsWith("data:")) data += line.slice(5).trim();
-              if (line === "" && data) { buffer = data; data = ""; }
-            }
-          }
-          if (done) break;
-        }
-        body = buffer || data;
-      } else {
-        body = await response.text();
-      }
+
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        payload = JSON.parse(body) as { choices?: Array<{ message?: { content?: unknown } }> };
-      } catch {
-        lastNonJson = `${response.headers.get("content-type") || "unknown"}: ${body.slice(0, 300)}`;
-        if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 500));
+        const response = await fetch(
+          `${baseUrl.replace(/\/+$/, "")}/chat/completions`,
+          {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              accept: "application/json, text/event-stream",
+              authorization: `Bearer ${apiKey}`,
+            },
+            body: requestBody,
+            signal: controller.signal,
+          },
+        );
+
+        const payload = await readLlmResponse(response);
+        const content = payloadContent(payload);
+
+        if (!content) {
+          throw new Error("LLM không trả về nội dung.");
+        }
+
+        const generated = validateAnswers(parseJsonResponse(content));
+        return randomizeCorrectAnswer(
+          generated.answers,
+          generated.correctIndex,
+        );
+      } catch (error) {
+        lastError = error;
+
+        if (controller.signal.aborted) {
+          throw new Error(`LLM hết thời gian chờ sau ${timeoutSeconds || 120} giây.`);
+        }
+
+        if (attempt === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          continue;
+        }
       }
     }
-    if (!payload) throw new Error(`LLM trả về dữ liệu không phải JSON: ${lastNonJson}`);
-    const content = payload.choices?.[0]?.message?.content;
-    if (typeof content !== "string") throw new Error("LLM không trả về nội dung.");
-    const generated = validateAnswers(parseJsonResponse(content));
-    return randomizeCorrectAnswer(generated.answers, generated.correctIndex);
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("Không gọi được LLM.");
   } finally {
     clearTimeout(timeout);
   }
@@ -380,7 +550,6 @@ export async function generateWordCreator(
       const html = fillQuizTemplate(template, vocabulary, generated.answers);
       const fileName = `${safeFileName(row.source)}.html`;
       const filePath = path.join(outputDir, fileName);
-      await fs.writeFile(filePath, html, "utf8");
       await fs.writeFile(filePath, html, "utf8");
       await copyHtmlAssets(html, filePath);
       await log(`Phân tích GIF và render ${durationSeconds}s, FPS yêu cầu ${fps}${autoFps ? " (tự động khớp GIF)" : " (cố định)"}.`, "info", row.source);
