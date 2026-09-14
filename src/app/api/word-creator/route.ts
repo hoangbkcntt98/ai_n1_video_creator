@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { listWordCreatorQuestions, listWordCreatorSources } from "@/lib/wordCreator";
-import { enqueueWordCreator, getWordCreatorJob } from "@/lib/wordCreatorJobs";
+import { listWordCreatorQuestions, listWordCreatorSources } from "@/lib/wordCreator/index";
+import { enqueueWordCreator, getWordCreatorJob } from "@/lib/wordCreator/jobs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

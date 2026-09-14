@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { WordCreatorJob } from "@/lib/wordCreatorJobs";
-import type { WordCreatorSource } from "@/lib/wordCreator";
+import type { WordCreatorJob } from "@/lib/wordCreator/jobs";
+import type { WordCreatorSource } from "@/lib/wordCreator/index";
 import PatternVideoButton from "./PatternVideoButton";
 import styles from "./WordCreator.module.css";
 

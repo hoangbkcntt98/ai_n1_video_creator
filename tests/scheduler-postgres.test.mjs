@@ -82,7 +82,7 @@ test("PostgreSQL schedule queue integration", { skip: !process.env.SCHEDULE_TEST
     "@/lib/video": { markFacebookPublished: async () => {}, markFacebookScheduled: async () => {},
       markYouTubeUploaded: async () => {}, saveVideoDetails: async () => {} },
     "@/lib/youtube": youtube,
-    "@/lib/wordCreatorJobs": {
+    "@/lib/wordCreator/jobs": {
       getWordCreatorJob: async () => kanjiBusy ? { status: "running" } : null,
       enqueueWordCreator: async (options, reuseActive) => {
         assert.equal(reuseActive, false);

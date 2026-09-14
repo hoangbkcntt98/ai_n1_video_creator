@@ -12,7 +12,7 @@ const testLockKey = 1_000_000 + Number.parseInt(randomUUID().slice(0, 6), 16);
 function load(file, mocks) {
   const exports = {};
   const input = fs.readFileSync(file, "utf8");
-  const source = ts.transpileModule(file.endsWith("/wordCreatorJobs.ts")
+  const source = ts.transpileModule(file.endsWith("/jobs.ts")
     ? input.replaceAll("824731, 1", `${testLockKey}, 1`) : input, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
   }).outputText;
@@ -29,8 +29,8 @@ function load(file, mocks) {
 function route(overrides = {}, creatorOverrides = {}) {
   return load("src/app/api/word-creator/route.ts", {
     "next/server": { NextResponse: { json: (body, init) => Response.json(body, init) } },
-    "@/lib/wordCreator": { listWordCreatorQuestions: async () => [], ...creatorOverrides },
-    "@/lib/wordCreatorJobs": {
+    "@/lib/wordCreator/index": { listWordCreatorQuestions: async () => [], ...creatorOverrides },
+    "@/lib/wordCreator/jobs": {
       enqueueWordCreator: async () => ({ id: randomUUID(), status: "queued" }),
       getWordCreatorJob: async () => null,
       ...overrides,
@@ -141,7 +141,7 @@ test("PostgreSQL WordCreator background jobs", { skip: !process.env.WORD_CREATOR
     "node:crypto": { randomUUID },
     "node:fs": { promises: { appendFile: async () => {} } },
     "@/lib/db": { query: (...args) => pool.query(...args), db: () => pool },
-    "@/lib/wordCreator": { generateWordCreator: (...args) => generate(...args) },
+    "@/lib/wordCreator/index": { generateWordCreator: (...args) => generate(...args) },
     "@/lib/pipeline": { finishKanjiGeneration: async (...args) => { completedRuns.push(args); } },
   });
   const service = worker();

@@ -4,6 +4,9 @@ import path from "node:path";
 import { Pool } from "pg";
 import { appConfig, toRelativeOutputPath } from "@/lib/config";
 import { db, ensureWordCreatorSchema, query } from "@/lib/db";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import { runCommand } from "@/lib/studio";
 import { saveVideoDetails } from "@/lib/video";
 
@@ -114,7 +117,7 @@ async function renderHtmlVideo(htmlPath: string, source: string, durationSeconds
   let output;
   try {
     output = await runCommand(process.execPath, [
-    path.join(process.cwd(), "html-to-image.js"),
+    path.join(__dirname, "template", "html-to-image.js"),
     "--html", htmlPath,
     "--output", videoPath,
     "--duration", durationSeconds.toFixed(3),
@@ -531,7 +534,7 @@ export async function generateWordCreator(
   }
   await log(`Chuẩn bị: ${options.source || "tự động chọn Kanji"}, ${options.limit ?? 100} record, ${fps} FPS.`);
   await ensureWordCreatorSchema();
-  const template = await fs.readFile(path.join(process.cwd(), "template.html"), "utf8");
+  const template = await fs.readFile(path.join(__dirname, "template", "template.html"), "utf8");
   const outputDir = path.resolve(appConfig.wordCreatorOutputDir());
   await fs.mkdir(outputDir, { recursive: true });
   const durationSeconds = options.durationSeconds ?? appConfig.wordCreatorDuration();
@@ -577,13 +580,13 @@ export async function generateWordCreator(
       });
       await query(
         `INSERT INTO word_creator_questions
-          (anki_note_id, source, required_vocabulary, answer_a, answer_b, answer_c, answer_d, correct_index, correct_answer, template_path, video_path, duration_seconds, fps, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
+          (anki_note_id, source, required_vocabulary, answer_a, answer_b, answer_c, answer_d, correct_index, correct_answer, template_path, video_path, duration_seconds, fps, status, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'video_generated',NOW())
          ON CONFLICT (source, required_vocabulary) DO UPDATE SET
            anki_note_id = EXCLUDED.anki_note_id, answer_a = EXCLUDED.answer_a, answer_b = EXCLUDED.answer_b,
            answer_c = EXCLUDED.answer_c, answer_d = EXCLUDED.answer_d, correct_index = EXCLUDED.correct_index,
            correct_answer = EXCLUDED.correct_answer, template_path = EXCLUDED.template_path,
-           video_path = EXCLUDED.video_path, duration_seconds = EXCLUDED.duration_seconds, fps = EXCLUDED.fps, updated_at = NOW()`,
+           video_path = EXCLUDED.video_path, duration_seconds = EXCLUDED.duration_seconds, fps = EXCLUDED.fps, status = 'video_generated', updated_at = NOW()`,
         [row.anki_note_id, row.source, vocabulary, ...generated.answers, generated.correctIndex, generated.answers[generated.correctIndex], filePath, relativeVideoPath, durationSeconds, rendered.fps],
       );
       results.push({

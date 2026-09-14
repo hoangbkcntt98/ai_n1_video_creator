@@ -4,7 +4,7 @@ import path from "node:path";
 import { appConfig, resolvedOutputPath, toRelativeOutputPath } from "@/lib/config";
 import { ensureVideoCreatorSchema, processAlive, query } from "@/lib/db";
 import { markFacebookPublished, markFacebookScheduled, markYouTubeUploaded, saveVideoDetails } from "@/lib/video";
-import { markWordCreatorStatus } from "@/lib/wordCreator";
+import { markWordCreatorStatus } from "@/lib/wordCreator/index";
 import { validateYouTubePublishSettings, validateYouTubeUpload, youtubeConfiguration, type YouTubeUploadInput, type YouTubePublishSettings } from "@/lib/youtube";
 
 type AfterRunPublish = {
@@ -309,7 +309,7 @@ export async function startKanjiGeneration(input: {
   scheduleJobId: number;
   kanjiOptions?: { source?: string; durationSeconds: number; fps: number; autoFps: boolean };
 }) {
-  const { enqueueWordCreator, getWordCreatorJob } = await import("@/lib/wordCreatorJobs");
+  const { enqueueWordCreator, getWordCreatorJob } = await import("@/lib/wordCreator/jobs");
   const active = await getWordCreatorJob();
   if (active && (active.status === "running" || active.status === "queued")) {
     throw Object.assign(new Error("Kanji worker is busy."), { code: "23505" });

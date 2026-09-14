@@ -118,6 +118,9 @@ export async function markFacebookPublished(relativePath: string, videoId: strin
     ON CONFLICT (relative_path) DO UPDATE SET facebook_video_id = EXCLUDED.facebook_video_id,
       published_at = NOW(), updated_at = NOW()`, [relativePath, videoId]);
   await markGrammarPublished(relativePath, videoId);
+  // Update word_creator_questions status for WordCreator/Kanji videos
+  await query(`UPDATE word_creator_questions SET status = 'publish_facebook_ok', updated_at = NOW()
+    WHERE video_path = $1`, [relativePath]);
 }
 
 export async function markYouTubeUploaded(relativePath: string, videoId: string, privacy: string) {
@@ -130,6 +133,9 @@ export async function markYouTubeUploaded(relativePath: string, videoId: string,
         THEN COALESCE(video_creator_videos.youtube_uploaded_at, NOW()) ELSE NOW() END,
       youtube_privacy = EXCLUDED.youtube_privacy, updated_at = NOW()`,
     [relativePath, videoId, privacy]);
+  // Update word_creator_questions status for WordCreator/Kanji videos
+  await query(`UPDATE word_creator_questions SET status = 'publish_youtube_ok', updated_at = NOW()
+    WHERE video_path = $1`, [relativePath]);
 }
 
 async function markGrammarPublished(relativePath: string, videoId: string) {
