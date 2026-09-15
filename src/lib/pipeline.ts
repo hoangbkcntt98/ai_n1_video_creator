@@ -105,8 +105,13 @@ async function performPublishAfterRun(run: Pick<Run, "id" | "log_path" | "action
     if (!video) throw new Error("Video created, but output video path is missing.");
     const patternName = path.basename(video).replace(/_video\.mp4$/i, "");
     const captionPath = path.join(appConfig.dataDir(), path.dirname(video), `${patternName}_reel_caption.txt`);
-    const caption = plan.caption ?? await fs.readFile(captionPath, "utf8").catch(() => "");
-    const title = plan.title ?? patternName.replaceAll("_", " ").trim();
+    // Try reading from video_creator_videos first (saved by saveVideoDetails)
+    const savedDetails = await query<{ title: string | null; caption: string | null }>(
+      `SELECT title, caption FROM video_creator_videos WHERE relative_path = $1`,
+      [video]
+    );
+    const caption = plan.caption ?? savedDetails.rows[0]?.caption ?? await fs.readFile(captionPath, "utf8").catch(() => "");
+    const title = plan.title ?? savedDetails.rows[0]?.title ?? patternName.replaceAll("_", " ").trim();
     if (plan.facebook) {
       try {
         const upload = await startFacebookPublish(video, caption, { title }, {
